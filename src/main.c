@@ -5,20 +5,20 @@
 #include "config.h"
 #include "logging.h"
 #include "utils.h"
-
 #include <signal.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef _WIN32
 typedef SSIZE_T ssize_t;
 #include <windows.h>
-#include <winioctl.h>
-#include <stdio.h>
-
+#include <wintun.h>
 #pragma comment(lib, "wintun.lib")
 #else
+#include <unistd.h>
 #endif
 
-#include <sys/types.h> 
 // Флаг для выхода из основного цикла
 static volatile bool terminate_flag = false;
 
@@ -41,7 +41,6 @@ void process_data(int socket_fd, int tun_fd) {
         // Шифруем данные
         size_t encrypted_len;
         encrypt_data(buffer, bytes_read, buffer, &encrypted_len);
-
         // Отправляем зашифрованные данные через сокет
         send_data(socket_fd, buffer, encrypted_len);
     } else if (bytes_read == 0) {
@@ -57,7 +56,6 @@ void process_data(int socket_fd, int tun_fd) {
         // Дешифруем данные
         size_t decrypted_len;
         decrypt_data(buffer, bytes_read, buffer, &decrypted_len);
-
         // Записываем дешифрованные данные в туннель
         write_to_tunnel(buffer, decrypted_len);
     } else if (bytes_read == 0) {
@@ -68,6 +66,7 @@ void process_data(int socket_fd, int tun_fd) {
     }
 }
 
+// Основная функция
 int main(int argc, char *argv[]) {
     // Инициализация системы логирования
     init_logging("vpn.log", LOG_LEVEL_INFO, true);
@@ -75,7 +74,6 @@ int main(int argc, char *argv[]) {
     // Обработка параметров командной строки
     const char *server_ip = "127.0.0.1";
     int server_port = 8080;
-
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
             server_ip = argv[++i];
@@ -111,6 +109,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Настройка туннеля
+    int tun_fd = -1; // Добавляем переменную для файлового дескриптора туннеля
     if (!setup_tunnel(socket_fd)) {
         log_error("Failed to set up tunnel.");
         cleanup_encryption();
@@ -121,28 +120,16 @@ int main(int argc, char *argv[]) {
     log_info("VPN core is running...");
 
     // Основной цикл обработки данных
-
 #ifdef _WIN32
     while (!terminate_flag) {
-        process_data_windows(socket_fd);
-
-        // Проверка флага завершения
-        if (should_terminate()) {
-            break;
-        }
+        process_data(socket_fd, tun_fd); // Исправляем вызов функции
     }
 #else
     while (!terminate_flag) {
-        process_data(socket_fd, tun_fd);
-
-        // Проверка флага завершения
-        if (should_terminate()) {
-            break;
-        }
+        process_data(socket_fd, tun_fd); // Исправляем вызов функции
     }
 #endif
 
-    
     log_info("Shutting down VPN core...");
 
     // Очистка ресурсов
@@ -152,7 +139,6 @@ int main(int argc, char *argv[]) {
 
     // Завершение работы системы логирования
     close_logging();
-
     log_info("VPN core terminated successfully.");
 
     return EXIT_SUCCESS;
