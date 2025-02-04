@@ -6,8 +6,7 @@
 #include <pthread.h>
 
 
-#include <openssl/types.h>
-
+#include "openssl/types.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -196,6 +195,79 @@ void close_connection(int socket_fd) {
     }
 }
 
+
+
+int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const char *target_host, int target_port) {
+    int sockfd;
+    struct sockaddr_in proxy_addr;
+
+    // Инициализация Winsock на Windows
+    init_winsock();
+
+    // Создание сокета
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        log_error("Socket creation failed");
+        cleanup_winsock();
+        return -1;
+    }
+
+    // Настройка адреса прокси
+    memset(&proxy_addr, 0, sizeof(proxy_addr));
+    proxy_addr.sin_family = AF_INET;
+    proxy_addr.sin_port = htons(proxy_port);
+
+    // Преобразование IP-адреса прокси из текстового формата в сетевой
+    if (inet_pton(AF_INET, proxy_ip, &proxy_addr.sin_addr) <= 0) {
+        log_error("Invalid proxy address/ Address not supported");
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+
+    // Подключение к прокси
+    if (connect(sockfd, (struct sockaddr *)&proxy_addr, sizeof(proxy_addr)) < 0) {
+        log_error("Connection to proxy failed");
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+
+    // Формирование HTTP CONNECT запроса
+    char request[256];
+    snprintf(request, sizeof(request), "CONNECT %s:%d HTTP/1.1\r\nHost: %s:%d\r\n\r\n",
+             target_host, target_port, target_host, target_port);
+
+    // Отправка запроса на прокси
+    if (send(sockfd, request, strlen(request), 0) < 0) {
+        log_error("Failed to send CONNECT request to proxy");
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+
+    // Чтение ответа от прокси
+    char response[256];
+    ssize_t bytes_received = recv(sockfd, response, sizeof(response) - 1, 0);
+    if (bytes_received <= 0) {
+        log_error("Failed to receive response from proxy");
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+    response[bytes_received] = '\0';
+
+    // Проверка успешности подключения
+    if (strstr(response, "200 Connection established") == NULL) {
+        log_error("Proxy connection failed: %s", response);
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+
+    log_info("HTTPS proxy tunnel established successfully through %s:%d", proxy_ip, proxy_port);
+    return sockfd;
+}
 
 
 static SSL_CTX *ssl_ctx = NULL;
