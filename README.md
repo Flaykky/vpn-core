@@ -3,8 +3,8 @@
 A minimal VPN-like client implementation for educational purposes.
 
 ## Features
-- Connect to multiple servers/proxies from config file
 - Basic TCP tunneling
+- Connect with HTTPS proxies
 - Cross-platform support (Windows/Linux)
 
 ## Build
@@ -15,11 +15,17 @@ A minimal VPN-like client implementation for educational purposes.
 - OpenSSL
 - pthreads 
 - getopt.h
+
+
+### TCP tunneling
+```bash
+./vpnCore --server 192.168.1.100 --port 8080
+```
+
 ### Instructions
 ```bash
 mkdir build
 cd build
 cmake ..
 cmake --build .
-
-
+```
