@@ -14,8 +14,12 @@
 #include <windows.h>
 typedef SSIZE_T ssize_t;
 #pragma comment(lib, "ws2_32.lib")
+
 #else
-#include <netdb.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 #endif
 
 #include <errno.h>
@@ -27,7 +31,52 @@ static pthread_mutex_t connection_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
 
+static void cleanup_winsock(void) {
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
 
+// Установка TCP-туннеля
+int establish_tcp_tunnel(const char *server_ip, int port) {
+    int sockfd;
+    struct sockaddr_in server_addr;
+
+    // Инициализация Winsock на Windows
+    init_winsock();
+
+    // Создание сокета
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        log_error("Socket creation failed");
+        cleanup_winsock();
+        return -1;
+    }
+
+    // Настройка адреса сервера
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+
+    // Преобразование IP-адреса из текстового формата в сетевой
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        log_error("Invalid address/ Address not supported");
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+
+    // Подключение к серверу
+    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        log_error("Connection failed");
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+
+    log_info("TCP tunnel established successfully to %s:%d", server_ip, port);
+    return sockfd;
+}
 
 // Инициализация Winsock на Windows
 static void init_winsock(void) {
