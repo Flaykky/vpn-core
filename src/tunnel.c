@@ -10,8 +10,10 @@ typedef SSIZE_T ssize_t;
 
 #pragma comment(lib, "wintun.lib")
 #else
-#include <sys/types.h> // Для ssize_t
 #endif
+
+#include <sys/types.h>
+
 
 static int tun_fd = -1;
 
@@ -56,6 +58,7 @@ void teardown_tunnel(void) {
         log_info("Tunnel torn down successfully on Windows");
     }
 }
+
 #else
 // Unix-specific code for creating a TUN/TAP interface
 bool setup_tunnel(int socket_fd) {
