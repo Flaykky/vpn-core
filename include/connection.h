@@ -40,8 +40,18 @@ ssize_t receive_data(ConnectionState *state, void *buffer, size_t length);
 
 int establish_tcp_tunnel(const char *server_ip, int port);
 
+int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const char *target_host, int target_port);
 
 // Переподключение при разрыве
 bool reconnect(ConnectionState *state);
+
+// Установка UDP-соединения
+int establish_udp_connection(const char *server_ip, int port);
+
+// Отправка данных через UDP
+ssize_t send_udp_data(int socket_fd, const void *data, size_t length, const struct sockaddr_in *server_addr);
+
+// Получение данных через UDP
+ssize_t receive_udp_data(int socket_fd, void *buffer, size_t length, struct sockaddr_in *client_addr);
 
 #endif // CONNECTION_H
