@@ -1,0 +1,67 @@
+# Компилятор
+CC = gcc
+
+# Флаги компиляции
+CFLAGS = -Wall -Wextra -O2 -g
+
+# Флаги для линкера
+LDFLAGS = -lssl -lcrypto -lpthread
+
+# Имя исполняемого файла
+TARGET = vpnCore
+
+# Исходные файлы
+SRCS = \
+    main.c \
+    connection.c \
+    encryption.c \
+    tunnel.c \
+    logging.c \
+    config.c \
+    utils.c \
+    common.c
+
+# Объектные файлы
+OBJS = $(SRCS:.c=.o)
+
+# Заголовочные файлы
+HDRS = \
+    common.h \
+    connection.h \
+    encryption.h \
+    tunnel.h \
+    logging.h \
+    config.h \
+    utils.h
+
+# Правило по умолчанию
+all: $(TARGET)
+
+# Сборка исполняемого файла
+$(TARGET): $(OBJS)
+    $(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)
+    @echo "Build complete: $(TARGET)"
+
+# Компиляция исходных файлов в объектные файлы
+%.o: %.c $(HDRS)
+    $(CC) $(CFLAGS) -c $< -o $@
+
+# Очистка временных файлов
+clean:
+    rm -f $(OBJS) $(TARGET)
+    @echo "Cleaned up build files"
+
+# Удаление всех временных файлов, включая логи
+distclean: clean
+    rm -f *.log
+    @echo "Cleaned up all generated files"
+
+# Правило для запуска программы
+run: $(TARGET)
+    ./$(TARGET)
+
+# Правило для отладки
+debug: CFLAGS += -DDEBUG
+debug: all
+
+.PHONY: all clean distclean run debug
