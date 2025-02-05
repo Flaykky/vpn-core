@@ -3,7 +3,7 @@
 #include <pthread.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
-
+#include <openssl/types.h>
 
 // Статические переменные для контекста шифрования
 static EVP_CIPHER_CTX *ctx = NULL;
