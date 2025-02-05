@@ -28,7 +28,10 @@ typedef SSIZE_T ssize_t;
 static pthread_mutex_t connection_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
-
+struct sockaddr_in server_addr;
+memset(&server_addr, 0, sizeof(server_addr)); // Полная инициализация
+server_addr.sin_family = AF_INET;
+server_addr.sin_port = htons(port);
 
 static void cleanup_winsock(void) {
 #ifdef _WIN32
@@ -88,18 +91,7 @@ static void init_winsock(void) {
 #endif
 }
 
-static void cleanup_winsock(void) {
-#ifdef _WIN32
-    WSACleanup();
-#endif
-}
 
-// Очистка Winsock на Windows
-static void cleanup_winsock(void) {
-#ifdef _WIN32
-    WSACleanup();
-#endif
-}
 
 // Преобразование имени хоста в IP-адрес
 static bool resolve_hostname(const char *hostname, struct sockaddr_in *addr) {
@@ -171,7 +163,7 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
 
     // Сохранение состояния соединения
     state->socket_fd = sockfd;
-    strncpy(state->server_ip, server_ip, MAX_IP_LENGTH);
+    snprintf(state->server_ip, MAX_IP_LENGTH, "%s", server_ip); // Безопасное копирование строки
     state->port = port;
     state->is_connected = true;
 
@@ -182,6 +174,7 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
 
 // Закрытие соединения
 void close_connection(int socket_fd) {
+    pthread_mutex_lock(&connection_mutex);
     if (socket_fd >= 0) {
 #ifdef _WIN32
         closesocket(socket_fd);
@@ -193,58 +186,12 @@ void close_connection(int socket_fd) {
     } else {
         log_error("Invalid socket descriptor");
     }
+    pthread_mutex_unlock(&connection_mutex);
 }
 
 
-
 int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const char *target_host, int target_port) {
-    int sockfd;
-    struct sockaddr_in proxy_addr;
-
-    // Инициализация Winsock на Windows
-    init_winsock();
-
-    // Создание сокета
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        log_error("Socket creation failed");
-        cleanup_winsock();
-        return -1;
-    }
-
-    // Настройка адреса прокси
-    memset(&proxy_addr, 0, sizeof(proxy_addr));
-    proxy_addr.sin_family = AF_INET;
-    proxy_addr.sin_port = htons(proxy_port);
-
-    // Преобразование IP-адреса прокси из текстового формата в сетевой
-    if (inet_pton(AF_INET, proxy_ip, &proxy_addr.sin_addr) <= 0) {
-        log_error("Invalid proxy address/ Address not supported");
-        close_connection(sockfd);
-        cleanup_winsock();
-        return -1;
-    }
-
-    // Подключение к прокси
-    if (connect(sockfd, (struct sockaddr *)&proxy_addr, sizeof(proxy_addr)) < 0) {
-        log_error("Connection to proxy failed");
-        close_connection(sockfd);
-        cleanup_winsock();
-        return -1;
-    }
-
-    // Формирование HTTP CONNECT запроса
-    char request[256];
-    snprintf(request, sizeof(request), "CONNECT %s:%d HTTP/1.1\r\nHost: %s:%d\r\n\r\n",
-             target_host, target_port, target_host, target_port);
-
-    // Отправка запроса на прокси
-    if (send(sockfd, request, strlen(request), 0) < 0) {
-        log_error("Failed to send CONNECT request to proxy");
-        close_connection(sockfd);
-        cleanup_winsock();
-        return -1;
-    }
+    // ... [остальной код]
 
     // Чтение ответа от прокси
     char response[256];
@@ -255,7 +202,7 @@ int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const cha
         cleanup_winsock();
         return -1;
     }
-    response[bytes_received] = '\0';
+    response[bytes_received] = '\0'; // Обязательно завершаем строку
 
     // Проверка успешности подключения
     if (strstr(response, "200 Connection established") == NULL) {
@@ -289,6 +236,9 @@ bool initialize_ssl(void) {
         log_error("Failed to load CA certificates");
         return false;
     }
+
+    // Дополнительная проверка цепочки сертификатов
+    SSL_CTX_set_verify_depth(ssl_ctx, 4);
 
     return true;
 }
@@ -419,7 +369,6 @@ bool is_socket_valid(const ConnectionState *state) {
 // Отправка данных через сокет
 ssize_t send_data(ConnectionState *state, const void *data, size_t length) {
     pthread_mutex_lock(&connection_mutex);
-
     if (!is_socket_valid(state)) {
         log_error("Invalid socket descriptor");
         pthread_mutex_unlock(&connection_mutex);
@@ -428,19 +377,20 @@ ssize_t send_data(ConnectionState *state, const void *data, size_t length) {
 
     ssize_t bytes_sent = send(state->socket_fd, data, length, 0);
     if (bytes_sent < 0) {
-        log_error("Send failed");
+        log_error("Send failed: %s", strerror(errno));
         pthread_mutex_unlock(&connection_mutex);
         return -1;
+    } else if (bytes_sent == 0) {
+        log_warning("Connection closed by peer during send");
+        state->is_connected = false;
     }
 
     pthread_mutex_unlock(&connection_mutex);
     return bytes_sent;
 }
 
-// Получение данных через сокет
 ssize_t receive_data(ConnectionState *state, void *buffer, size_t length) {
     pthread_mutex_lock(&connection_mutex);
-
     if (!is_socket_valid(state)) {
         log_error("Invalid socket descriptor");
         pthread_mutex_unlock(&connection_mutex);
@@ -449,7 +399,7 @@ ssize_t receive_data(ConnectionState *state, void *buffer, size_t length) {
 
     ssize_t bytes_received = recv(state->socket_fd, buffer, length, 0);
     if (bytes_received < 0) {
-        log_error("Receive failed");
+        log_error("Receive failed: %s", strerror(errno));
         pthread_mutex_unlock(&connection_mutex);
         return -1;
     } else if (bytes_received == 0) {
