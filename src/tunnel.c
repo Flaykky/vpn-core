@@ -21,19 +21,35 @@ static int tun_fd = -1;
 // Windows-specific code for creating a virtual network interface using Wintun
 static HANDLE wintun_handle = NULL;
 
-bool setup_tunnel(int socket_fd) {
-    // Initialize Wintun
+bool setup_tunnel(int socket_fd, const char *ip_address, const char *subnet_mask) {
     if (!WintunIsAvailable()) {
         log_error("Wintun is not available on this system");
         return false;
     }
+
+
+    
 
     // Create a new adapter
     const char *adapter_name = "VPN-Tunnel";
     const char *ip_address = "192.168.77.2";
     const char *subnet_mask = "255.255.255.0";
 
+#ifdef _WIN32
     wintun_handle = WintunCreateAdapter(adapter_name, ip_address, subnet_mask);
+#else
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    inet_pton(AF_INET, ip_address, &addr.sin_addr); // Используем переданный IP
+    ifr.ifr_addr = *(struct sockaddr *)&addr;
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    inet_pton(AF_INET, subnet_mask, &addr.sin_addr); // Используем переданную маску
+    ifr.ifr_netmask = *(struct sockaddr *)&addr;
+#endif
+
     if (!wintun_handle) {
         log_error("Failed to create Wintun adapter");
         return false;
@@ -53,12 +69,15 @@ bool setup_tunnel(int socket_fd) {
 
 void teardown_tunnel(void) {
     if (wintun_handle) {
-        WintunStopSession(tun_fd);
-        WintunDeleteAdapter(wintun_handle);
+        if (!WintunStopSession(tun_fd)) {
+            log_error("Failed to stop Wintun session");
+        }
+        if (!WintunDeleteAdapter(wintun_handle)) {
+            log_error("Failed to delete Wintun adapter");
+        }
         log_info("Tunnel torn down successfully on Windows");
     }
 }
-
 #else
 // Unix-specific code for creating a TUN/TAP interface
 bool setup_tunnel(int socket_fd) {
@@ -146,14 +165,25 @@ ssize_t read_from_tunnel(void *buffer, size_t length) {
         log_error("Invalid tunnel file descriptor");
         return -1;
     }
-
     ssize_t bytes_read = read(tun_fd, buffer, length);
     if (bytes_read < 0) {
         perror("read from tunnel failed");
         return -1;
     }
-
     return bytes_read;
+}
+
+ssize_t write_to_tunnel(const void *buffer, size_t length) {
+    if (tun_fd < 0) {
+        log_error("Invalid tunnel file descriptor");
+        return -1;
+    }
+    ssize_t bytes_written = write(tun_fd, buffer, length);
+    if (bytes_written < 0) {
+        perror("write to tunnel failed");
+        return -1;
+    }
+    return bytes_written;
 }
 
 // Запись данных в туннель
