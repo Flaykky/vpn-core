@@ -61,12 +61,16 @@ int establish_tcp_tunnel(const char *server_ip, int port) {
     server_addr.sin_port = htons(port);
 
     // Преобразование IP-адреса из текстового формата в сетевой
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        log_error("Invalid address/ Address not supported");
-        close_connection(sockfd);
-        cleanup_winsock();
-        return -1;
+if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+    if (errno == EAFNOSUPPORT) {
+        log_error("Invalid address family for IP address");
+    } else {
+        log_error("Invalid or unsupported IP address format");
     }
+    close_connection(sockfd);
+    cleanup_winsock();
+    return -1;
+}
 
     // Подключение к серверу
     if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
@@ -218,6 +222,8 @@ int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const cha
 
 
 static SSL_CTX *ssl_ctx = NULL;
+SSL_CTX_set_verify_depth(ssl_ctx, 4); // Устанавливаем максимальную глубину цепочки сертификатов
+
 
 bool initialize_ssl(void) {
     SSL_library_init();
@@ -226,19 +232,17 @@ bool initialize_ssl(void) {
 
     ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!ssl_ctx) {
-        log_error("Failed to create SSL context");
+        log_error("Failed to create SSL context: %s", ERR_error_string(ERR_get_error(), NULL));
         return false;
     }
 
     // Настройка проверки сертификатов
     SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, NULL);
     if (!SSL_CTX_load_verify_locations(ssl_ctx, "ca-certificates.crt", NULL)) {
-        log_error("Failed to load CA certificates");
+        log_error("Failed to load CA certificates: %s", ERR_error_string(ERR_get_error(), NULL));
+        SSL_CTX_free(ssl_ctx);
         return false;
     }
-
-    // Дополнительная проверка цепочки сертификатов
-    SSL_CTX_set_verify_depth(ssl_ctx, 4);
 
     return true;
 }
@@ -409,6 +413,13 @@ ssize_t receive_data(ConnectionState *state, void *buffer, size_t length) {
 
     pthread_mutex_unlock(&connection_mutex);
     return bytes_received;
+}
+
+
+int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+if (result != 0) {
+    log_error("WSAStartup failed with error: %d", WSAGetLastError());
+    exit(EXIT_FAILURE);
 }
 
 // Переподключение при разрыве
