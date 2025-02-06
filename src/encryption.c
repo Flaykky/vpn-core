@@ -5,11 +5,21 @@
 #include <openssl/rand.h>
 #include <openssl/types.h>
 
-// Статические переменные для контекста шифрования
-static EVP_CIPHER_CTX *ctx = NULL;
-static unsigned char key[32]; // 256-bit key for AES-256
-static unsigned char iv[16];  // 128-bit IV for AES
-static pthread_mutex_t encryption_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+typedef struct {
+    unsigned char key[32];
+    unsigned char iv[16];
+} EncryptionContext;
+
+static EncryptionContext enc_ctx;
+
+bool generate_unique_iv(unsigned char *iv, size_t iv_len) {
+    if (!RAND_bytes(iv, iv_len)) {
+        log_error("Failed to generate unique IV");
+        return false;
+    }
+    return true;
+}
 
 // Инициализация контекста шифрования
 bool initialize_encryption(void) {
@@ -50,22 +60,27 @@ void cleanup_encryption(void) {
         EVP_CIPHER_CTX_free(ctx);
         ctx = NULL;
     }
+    memset(enc_ctx.key, 0, sizeof(enc_ctx.key)); // Очищаем ключ
+    memset(enc_ctx.iv, 0, sizeof(enc_ctx.iv));   // Очищаем IV
     log_info("Encryption context cleaned up successfully");
     pthread_mutex_unlock(&encryption_mutex);
 }
 
 
-void encrypt_data_with_gcm(const void *input, size_t input_len, void *output, size_t *output_len, unsigned char *tag) {
+bool encrypt_data_with_gcm(const void *input, size_t input_len, void *output, size_t *output_len, unsigned char *tag) {
     int len;
-    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
-    if (!ctx) return;
+    pthread_mutex_lock(&encryption_mutex);
 
-    // Инициализация контекста
-    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, key, iv) != 1) {
-        log_error("Failed to initialize encryption context");
-        EVP_CIPHER_CTX_free(ctx);
-        return;
+    if (!ctx) {
+        log_error("Encryption context not initialized");
+        pthread_mutex_unlock(&encryption_mutex);
+        return false;
     }
+
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, enc_ctx.key, enc_ctx.iv) != 1) {
+        log_error("Failed to initialize encryption context");
+        pthread_mutex_unlock(&encryption_mutex);
+      
 
     // Шифрование данных
     if (EVP_EncryptUpdate(ctx, output, &len, input, input_len) != 1) {
@@ -92,7 +107,12 @@ void encrypt_data_with_gcm(const void *input, size_t input_len, void *output, si
 
     EVP_CIPHER_CTX_free(ctx);
     log_info("Data encrypted successfully with GCM");
+
+
+        pthread_mutex_unlock(&encryption_mutex);
+    return true;
 }
+
 
 
 
@@ -168,8 +188,8 @@ bool decrypt_data(const void *input, size_t input_len, void *output, size_t *out
 bool get_encryption_key(unsigned char *key_out, size_t *key_len) {
     pthread_mutex_lock(&encryption_mutex);
     if (key_out && key_len) {
-        memcpy(key_out, key, sizeof(key));
-        *key_len = sizeof(key);
+        memcpy(key_out, enc_ctx.key, sizeof(enc_ctx.key));
+        *key_len = sizeof(enc_ctx.key);
         pthread_mutex_unlock(&encryption_mutex);
         return true;
     }
