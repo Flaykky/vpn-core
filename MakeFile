@@ -1,67 +1,36 @@
-# Компилятор
+# Makefile for Windows
+
 CC = gcc
 
-# Флаги компиляции
-CFLAGS = -Wall -Wextra -O2 -g
 
-# Флаги для линкера
-LDFLAGS = -lssl -lcrypto -lpthread
+CFLAGS = -Wall -O2 -D_WIN32 -Iinclude -Llib
 
-# Имя исполняемого файла
-TARGET = vpnCore
 
-# Исходные файлы
+LIBS = -lws2_32 -lwintun -lcrypto -lssl
+
+
+TARGET = VPNCore.exe
+
 SRCS = \
-    main.c \
+    common.c \
+    config.c \
     connection.c \
     encryption.c \
-    tunnel.c \
     logging.c \
-    config.c \
-    utils.c \
-    common.c
+    main.c \
+    tunnel.c \
+    utils.c
 
-# Объектные файлы
 OBJS = $(SRCS:.c=.o)
 
-# Заголовочные файлы
-HDRS = \
-    common.h \
-    connection.h \
-    encryption.h \
-    tunnel.h \
-    logging.h \
-    config.h \
-    utils.h
-
-# Правило по умолчанию
 all: $(TARGET)
 
-# Сборка исполняемого файла
 $(TARGET): $(OBJS)
-    $(CC) $(OBJS) -o $(TARGET) $(LDFLAGS)
-    @echo "Build complete: $(TARGET)"
-
-# Компиляция исходных файлов в объектные файлы
-%.o: %.c $(HDRS)
+    $(CC) $(OBJS) -o $(TARGET) $(LIBS)
+%.o: %.c
     $(CC) $(CFLAGS) -c $< -o $@
 
-# Очистка временных файлов
 clean:
-    rm -f $(OBJS) $(TARGET)
-    @echo "Cleaned up build files"
+    del /Q *.o $(TARGET)
 
-# Удаление всех временных файлов, включая логи
-distclean: clean
-    rm -f *.log
-    @echo "Cleaned up all generated files"
-
-# Правило для запуска программы
-run: $(TARGET)
-    ./$(TARGET)
-
-# Правило для отладки
-debug: CFLAGS += -DDEBUG
-debug: all
-
-.PHONY: all clean distclean run debug
+.PHONY: all clean
