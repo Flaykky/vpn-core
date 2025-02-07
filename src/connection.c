@@ -5,8 +5,9 @@
 #include <string.h>
 #include <pthread.h>
 
+#include <openssl/types.h>
+#include <openssl/evp.h>
 
-#include "types.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
