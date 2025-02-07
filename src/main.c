@@ -23,6 +23,33 @@ typedef SSIZE_T ssize_t;
 
 
 
+bool read_config_file(const char *filename, Config *config) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        log_error("Failed to open config file: %s", filename);
+        return false;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        char *key = strtok(line, "=");
+        char *value = strtok(NULL, "\n");
+        if (key && value) {
+            if (strcmp(key, "server_ip") == 0) {
+                config->server_ip = strdup(value);
+            } else if (strcmp(key, "port") == 0) {
+                config->port = atoi(value);
+            }
+        }
+    }
+
+
+
+
+    fclose(file);
+    log_info("Configuration loaded from file: %s", filename);
+    return true;
+}
 
 // Флаг для выхода из основного цикла
 static volatile bool terminate_flag = false;
@@ -34,6 +61,10 @@ void signal_handler(int signum) {
         terminate_flag = true;
     }
 }
+
+
+
+
 
 void process_data(int socket_fd, Tunnel *tunnel) {
     char buffer[1024];
@@ -69,6 +100,9 @@ void process_data(int socket_fd, Tunnel *tunnel) {
         log_error("Error receiving from socket");
     }
 }
+
+
+
 
 // Основная функция
 int main(int argc, char *argv[]) {
@@ -123,6 +157,8 @@ int main(int argc, char *argv[]) {
             server_port = atoi(argv[++i]);
         }
     }
+
+    
 
     log_info("Starting VPN core...");
 
@@ -179,6 +215,80 @@ int main(int argc, char *argv[]) {
     log_error("Failed to set up tunnel.");
     return EXIT_FAILURE;
 }
+
+#ifdef _WIN32
+while (!terminate_flag) {
+    process_data_windows(socket_fd);
+    // Проверка флага завершения
+    if (should_terminate()) {
+        break;
+    }
+}
+#else
+while (!terminate_flag) {
+    if (use_udp) {
+        struct sockaddr_in server_addr;
+        memset(&server_addr, 0, sizeof(server_addr));
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(server_port);
+        inet_pton(AF_INET, server_ip, &server_addr.sin_addr);
+
+        char buffer[1024];
+        ssize_t bytes_received = receive_udp_data(socket_fd, buffer, sizeof(buffer), &server_addr);
+        if (bytes_received > 0) {
+            log_info("Received %zd bytes via UDP", bytes_received);
+            write_to_tunnel(buffer, bytes_received);
+        } else if (bytes_received == 0) {
+            log_info("UDP connection closed by peer");
+            terminate_flag = true;
+        } else {
+            log_error("Error receiving UDP data");
+        }
+    } else {
+        process_data(socket_fd, tun_fd);
+    }
+
+    // Проверка флага завершения
+    if (should_terminate()) {
+        break;
+    }
+}
+#endif
+
+
+
+
+// Обработка параметров командной строки
+const char *server_ip = "127.0.0.1";
+int server_port = 8080;
+bool use_udp = false; // Флаг для использования UDP
+
+for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
+        server_ip = argv[++i];
+    } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+        server_port = atoi(argv[++i]);
+    } else if (strcmp(argv[i], "--udp") == 0) {
+        use_udp = true; // Включаем UDP
+    }
+}
+
+
+
+// Установка соединения
+int socket_fd = -1;
+if (use_udp) {
+    socket_fd = establish_udp_connection(server_ip, server_port);
+} else {
+    socket_fd = establish_connection(server_ip, server_port);
+}
+
+if (socket_fd < 0) {
+    log_error("Failed to establish connection.");
+    return EXIT_FAILURE;
+}
+
+
 
     // Очистка ресурсов
     teardown_tunnel(&tunnel);
