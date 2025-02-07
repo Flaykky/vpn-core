@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <pthread.h>
 
+
 static FILE *log_file = NULL;
 static LogLevel min_log_level = LOG_LEVEL_NONE;
 static bool log_to_console = false;
