@@ -2,6 +2,7 @@
 #define CONFIG_H
 
 #include "common.h"
+#include <stdBool.h>
 
 // Структура для хранения конфигурации
 typedef struct {
