@@ -4,15 +4,20 @@
 #include <string.h>
 #include <stdbool.h>
 #include <getopt.h>
+#include <pthread.h>
+#include <connection.h>
+
 
 // Глобальная структура для хранения конфигурации
 static Config config = {0};
+static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // Функция для инициализации конфигурации
 bool initialize_config(int argc, char *argv[]) {
     static struct option long_options[] = {
         {"server", required_argument, 0, 's'},
         {"port", required_argument, 0, 'p'},
+        {"udp", no_argument, 0, 'u'}, // Новый флаг для UDP
         {0, 0, 0, 0}
     };
 
@@ -20,28 +25,42 @@ bool initialize_config(int argc, char *argv[]) {
     int option_index = 0;
 
     // Установка значений по умолчанию
+    pthread_mutex_lock(&config_mutex);
     config.server_ip = strdup("127.0.0.1");
     config.port = 8080;
+    config.use_udp = false; // По умолчанию TCP
+    pthread_mutex_unlock(&config_mutex);
 
-    while ((opt = getopt_long(argc, argv, "s:p:", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "s:p:u", long_options, &option_index)) != -1) {
         switch (opt) {
             case 's':
+                pthread_mutex_lock(&config_mutex);
                 free(config.server_ip);
                 config.server_ip = strdup(optarg);
                 if (!is_valid_ip(config.server_ip)) {
                     fprintf(stderr, "Invalid server IP address: %s\n", optarg);
+                    pthread_mutex_unlock(&config_mutex);
                     return false;
                 }
+                pthread_mutex_unlock(&config_mutex);
                 break;
             case 'p':
+                pthread_mutex_lock(&config_mutex);
                 config.port = atoi(optarg);
                 if (config.port <= 0 || config.port > 65535) {
                     fprintf(stderr, "Invalid port number: %d\n", config.port);
+                    pthread_mutex_unlock(&config_mutex);
                     return false;
                 }
+                pthread_mutex_unlock(&config_mutex);
+                break;
+            case 'u':
+                pthread_mutex_lock(&config_mutex);
+                config.use_udp = true;
+                pthread_mutex_unlock(&config_mutex);
                 break;
             default:
-                fprintf(stderr, "Usage: %s [-s server_ip] [-p port]\n", argv[0]);
+                fprintf(stderr, "Usage: %s [-s server_ip] [-p port] [--udp]\n", argv[0]);
                 return false;
         }
     }
@@ -50,63 +69,50 @@ bool initialize_config(int argc, char *argv[]) {
     return true;
 }
 
-
-bool read_config_from_file(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        log_error("Failed to open config file: %s", filename);
-        return false;
-    }
-
-    char line[256];
-    while (fgets(line, sizeof(line), file)) {
-        char *key = strtok(line, "=");
-        char *value = strtok(NULL, "\n");
-        if (key && value) {
-            if (strcmp(key, "server_ip") == 0) {
-                free(config.server_ip);
-                config.server_ip = strdup(value);
-            } else if (strcmp(key, "port") == 0) {
-                config.port = atoi(value);
-            }
-        }
-    }
-
-    fclose(file);
-    log_info("Configuration loaded from file: %s", filename);
-    return true;
-}
-
-typedef struct {
-    char *server_ip;
-    int port;
-    bool use_udp; // Флаг для использования UDP
-    int mtu;      // Размер MTU
-    char *cert_path; // Путь к сертификатам
-} Config;
-
-
 // Функция для получения серверного IP-адреса
 const char* get_server_ip(void) {
-    return config.server_ip;
+    pthread_mutex_lock(&config_mutex);
+    const char *ip = config.server_ip;
+    pthread_mutex_unlock(&config_mutex);
+    return ip;
 }
 
 // Функция для получения порта сервера
 int get_port(void) {
-    return config.port;
+    pthread_mutex_lock(&config_mutex);
+    int port = config.port;
+    pthread_mutex_unlock(&config_mutex);
+    return port;
+}
+
+// Функция для проверки использования UDP
+bool get_use_udp(void) {
+    pthread_mutex_lock(&config_mutex);
+    bool use_udp = config.use_udp;
+    pthread_mutex_unlock(&config_mutex);
+    return use_udp;
 }
 
 // Вспомогательная функция для проверки корректности IP-адреса
 bool is_valid_ip(const char *ip) {
     struct sockaddr_in sa;
-    return inet_pton(AF_INET, ip, &(sa.sin_addr)) != 0;
+    struct sockaddr_in6 sa6;
+
+    if (inet_pton(AF_INET, ip, &(sa.sin_addr)) == 1) {
+        return true; // IPv4
+    } else if (inet_pton(AF_INET6, ip, &(sa6.sin6_addr)) == 1) {
+        return true; // IPv6
+    }
+    return false;
 }
 
 // Функция для очистки конфигурации при завершении программы
 void cleanup_config(void) {
+    pthread_mutex_lock(&config_mutex);
     if (config.server_ip) {
         free(config.server_ip);
         config.server_ip = NULL;
     }
+    pthread_mutex_unlock(&config_mutex);
     log_info("Configuration cleaned up successfully");
 }
