@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include <stdbool.h>
 #include <getopt.h>
 
 // Глобальная структура для хранения конфигурации
@@ -49,6 +49,42 @@ bool initialize_config(int argc, char *argv[]) {
     log_info("Configuration initialized successfully");
     return true;
 }
+
+
+bool read_config_from_file(const char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        log_error("Failed to open config file: %s", filename);
+        return false;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        char *key = strtok(line, "=");
+        char *value = strtok(NULL, "\n");
+        if (key && value) {
+            if (strcmp(key, "server_ip") == 0) {
+                free(config.server_ip);
+                config.server_ip = strdup(value);
+            } else if (strcmp(key, "port") == 0) {
+                config.port = atoi(value);
+            }
+        }
+    }
+
+    fclose(file);
+    log_info("Configuration loaded from file: %s", filename);
+    return true;
+}
+
+typedef struct {
+    char *server_ip;
+    int port;
+    bool use_udp; // Флаг для использования UDP
+    int mtu;      // Размер MTU
+    char *cert_path; // Путь к сертификатам
+} Config;
+
 
 // Функция для получения серверного IP-адреса
 const char* get_server_ip(void) {
