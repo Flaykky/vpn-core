@@ -6,6 +6,7 @@ A minimal VPN-like client implementation for educational purposes.
 - Basic TCP tunneling
 - Connect with HTTPS proxies
 - Cross-platform support (Windows/Linux)
+- Basic UDP tunneling
 
 ## Build
 
