@@ -2,8 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <time.h>
+#include <config.h>
+
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -12,14 +16,68 @@
 #endif
 
 
-#include <fcntl.h>
-#include <errno.h>
-#include <sys/stat.h>
-
 // Проверка строки на пустоту
 bool is_string_empty(const char *str) {
     return str == NULL || strlen(str) == 0;
 }
+
+
+bool is_valid_ip(const char *ip) {
+    struct sockaddr_in sa;
+    int result = inet_pton(AF_INET, ip, &(sa.sin_addr));
+    if (result <= 0) {
+        log_error("Invalid or unsupported IP address format: %s", ip);
+        return false;
+    }
+    return true;
+}
+
+
+bool read_config_file(const char *filename, Config *config) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        log_error("Failed to open config file: %s", filename);
+        return false;
+    }
+
+    char line[256];
+    while (fgets(line, sizeof(line), file)) {
+        char *key = strtok(line, "=");
+        char *value = strtok(NULL, "\n");
+        if (key && value) {
+            if (strcmp(key, "server_ip") == 0) {
+                config->server_ip = strdup(value);
+            } else if (strcmp(key, "port") == 0) {
+                config->port = atoi(value);
+            }
+        }
+    }
+
+    fclose(file);
+    log_info("Configuration loaded from file: %s", filename);
+    return true;
+}
+
+
+char* safe_strncpy(char *dest, const char *src, size_t dest_size) {
+    if (!dest || !src || dest_size == 0) {
+        log_error("Invalid arguments for safe_strncpy");
+        return NULL;
+    }
+    snprintf(dest, dest_size, "%s", src);
+    return dest;
+}
+
+bool generate_unique_iv(unsigned char *iv, size_t iv_len) {
+    if (!RAND_bytes(iv, iv_len)) {
+        log_error("Failed to generate unique IV");
+        return false;
+    }
+    return true;
+}
+
+
+
 
 // Обрезка пробелов в начале и конце строки
 char* trim_whitespace(char *str) {
@@ -188,3 +246,4 @@ bool check_file_permissions(const char *filename) {
     return access(filename, R_OK) == 0;
 #endif
 }
+
