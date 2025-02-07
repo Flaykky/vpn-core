@@ -3,16 +3,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
-#include <sys/stat.h>
 #include <time.h>
 
 #ifdef _WIN32
 #include <windows.h>
 #else
 #include <unistd.h>
+#endif
+
+
 #include <fcntl.h>
 #include <errno.h>
-#endif
+#include <sys/stat.h>
 
 // Проверка строки на пустоту
 bool is_string_empty(const char *str) {
@@ -41,7 +43,6 @@ char* trim_whitespace(char *str) {
         memmove(str, str + start, end - start);
         str[end - start] = '\0';
     }
-
     return str;
 }
 
@@ -51,11 +52,43 @@ char* generate_random_string(size_t length) {
     char *random_str = malloc(length + 1);
     if (!random_str) return NULL;
 
-    for (size_t i = 0; i < length; ++i) {
-        random_str[i] = charset[rand() % (sizeof(charset) - 1)];
+#ifdef _WIN32
+    // Используем CryptGenRandom для генерации случайных чисел на Windows
+    HCRYPTPROV hProvider = 0;
+    if (!CryptAcquireContext(&hProvider, NULL, NULL, PROV_RSA_FULL, CRYPT_VERIFYCONTEXT)) {
+        free(random_str);
+        return NULL;
     }
-    random_str[length] = '\0';
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char random_byte;
+        if (!CryptGenRandom(hProvider, 1, &random_byte)) {
+            CryptReleaseContext(hProvider, 0);
+            free(random_str);
+            return NULL;
+        }
+        random_str[i] = charset[random_byte % (sizeof(charset) - 1)];
+    }
+    CryptReleaseContext(hProvider, 0);
+#else
+    // Используем /dev/urandom для генерации случайных чисел на Unix
+    FILE *urandom = fopen("/dev/urandom", "rb");
+    if (!urandom) {
+        free(random_str);
+        return NULL;
+    }
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char random_byte;
+        if (fread(&random_byte, 1, 1, urandom) != 1) {
+            fclose(urandom);
+            free(random_str);
+            return NULL;
+        }
+        random_str[i] = charset[random_byte % (sizeof(charset) - 1)];
+    }
+    fclose(urandom);
+#endif
 
+    random_str[length] = '\0';
     return random_str;
 }
 
@@ -83,8 +116,13 @@ char* format_time(time_t timestamp, char *buffer, size_t buffer_size) {
 
 // Проверка наличия файла
 bool file_exists(const char *filename) {
+#ifdef _WIN32
+    DWORD attrib = GetFileAttributes(filename);
+    return (attrib != INVALID_FILE_ATTRIBUTES && !(attrib & FILE_ATTRIBUTE_DIRECTORY));
+#else
     struct stat buffer;
     return (stat(filename, &buffer) == 0);
+#endif
 }
 
 // Чтение всего содержимого файла в строку
@@ -102,8 +140,8 @@ char* read_file_contents(const char *filename, size_t *length) {
         fclose(file);
         return NULL;
     }
-    fseek(file, 0, SEEK_SET);
 
+    fseek(file, 0, SEEK_SET);
     char *buffer = malloc(file_size + 1);
     if (!buffer) {
         perror("Failed to allocate memory for file contents");
@@ -126,4 +164,27 @@ char* read_file_contents(const char *filename, size_t *length) {
 
     fclose(file);
     return buffer;
+}
+
+// Кроссплатформенная функция для создания директории
+bool create_directory(const char *path) {
+#ifdef _WIN32
+    return CreateDirectory(path, NULL) || GetLastError() == ERROR_ALREADY_EXISTS;
+#else
+    return mkdir(path, 0755) == 0 || errno == EEXIST;
+#endif
+}
+
+// Кроссплатформенная функция для проверки прав доступа к файлу
+bool check_file_permissions(const char *filename) {
+#ifdef _WIN32
+    HANDLE hFile = CreateFile(filename, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    CloseHandle(hFile);
+    return true;
+#else
+    return access(filename, R_OK) == 0;
+#endif
 }
