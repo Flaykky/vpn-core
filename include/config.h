@@ -2,13 +2,14 @@
 #define CONFIG_H
 
 #include "common.h"
-#include <stdBool.h>
+#include <stdbool.h>
 
-// Структура для хранения конфигурации
 typedef struct {
     char *server_ip;
     int port;
-    // Добавьте другие необходимые параметры конфигурации здесь
+    bool use_udp; // Флаг для использования UDP
+    int mtu;      // Размер MTU
+    char *cert_path; // Путь к сертификатам
 } Config;
 
 // Функция для инициализации конфигурации
