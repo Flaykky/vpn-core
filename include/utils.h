@@ -2,6 +2,7 @@
 #define UTILS_H
 
 #include "common.h"
+#include <stdBool.h>
 
 // Функция для проверки строки на пустоту
 bool is_string_empty(const char *str);
