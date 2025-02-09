@@ -4,6 +4,15 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <openssl/types.h>
+#include <openssl/ec.h>
+
+
+typedef struct {
+    EC_KEY *ecdh_key; // Эфемерный ключ для ECDH
+    unsigned char shared_secret[32]; // Общий секретный ключ
+} PFSContext;
+
+static PFSContext pfs_ctx;
 
 
 typedef struct {
@@ -12,6 +21,135 @@ typedef struct {
 } EncryptionContext;
 
 static EncryptionContext enc_ctx;
+
+bool initialize_pfs(void) {
+    pthread_mutex_lock(&encryption_mutex);
+
+    // Создаем ECDH-ключ на основе кривой prime256v1 (NIST P-256)
+    pfs_ctx.ecdh_key = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+    if (!pfs_ctx.ecdh_key) {
+        log_error("Failed to create ECDH key");
+        pthread_mutex_unlock(&encryption_mutex);
+        return false;
+    }
+
+    // Генерируем эфемерный ключ
+    if (EC_KEY_generate_key(pfs_ctx.ecdh_key) != 1) {
+        log_error("Failed to generate ECDH key");
+        EC_KEY_free(pfs_ctx.ecdh_key);
+        pthread_mutex_unlock(&encryption_mutex);
+        return false;
+    }
+
+    log_info("PFS context initialized successfully");
+    pthread_mutex_unlock(&encryption_mutex);
+    return true;
+}
+
+size_t get_public_key(unsigned char *public_key_out, size_t max_len) {
+    pthread_mutex_lock(&encryption_mutex);
+
+    const EC_POINT *pub_key = EC_KEY_get0_public_key(pfs_ctx.ecdh_key);
+    const EC_GROUP *group = EC_KEY_get0_group(pfs_ctx.ecdh_key);
+
+    size_t len = EC_POINT_point2oct(group, pub_key, POINT_CONVERSION_UNCOMPRESSED, public_key_out, max_len, NULL);
+    if (len == 0) {
+        log_error("Failed to export public key");
+        pthread_mutex_unlock(&encryption_mutex);
+        return 0;
+    }
+
+    pthread_mutex_unlock(&encryption_mutex);
+    return len;
+}
+
+bool compute_shared_secret(const unsigned char *peer_public_key, size_t peer_public_key_len) {
+    pthread_mutex_lock(&encryption_mutex);
+
+    EC_POINT *peer_pub_key = EC_POINT_new(EC_KEY_get0_group(pfs_ctx.ecdh_key));
+    if (!peer_pub_key) {
+        log_error("Failed to allocate memory for peer's public key");
+        pthread_mutex_unlock(&encryption_mutex);
+        return false;
+    }
+
+    // Преобразуем полученный открытый ключ в точку на кривой
+    if (EC_POINT_oct2point(EC_KEY_get0_group(pfs_ctx.ecdh_key), peer_pub_key,
+                           peer_public_key, peer_public_key_len, NULL) != 1) {
+        log_error("Failed to convert peer's public key to EC point");
+        EC_POINT_free(peer_pub_key);
+        pthread_mutex_unlock(&encryption_mutex);
+        return false;
+    }
+
+    // Вычисляем общий секрет
+    size_t secret_len = (size_t)ECDH_compute_key(pfs_ctx.shared_secret, sizeof(pfs_ctx.shared_secret),
+                                                 peer_pub_key, pfs_ctx.ecdh_key, NULL);
+    if (secret_len == 0) {
+        log_error("Failed to compute shared secret");
+        EC_POINT_free(peer_pub_key);
+        pthread_mutex_unlock(&encryption_mutex);
+        return false;
+    }
+
+    EC_POINT_free(peer_pub_key);
+    log_info("Shared secret computed successfully");
+    pthread_mutex_unlock(&encryption_mutex);
+    return true;
+}
+
+bool initialize_encryption_with_pfs(void) {
+    pthread_mutex_lock(&encryption_mutex);
+
+    // Инициализируем контекст шифрования с использованием общего секрета
+    if (!ctx) {
+        ctx = EVP_CIPHER_CTX_new();
+        if (!ctx) {
+            log_error("Failed to create cipher context");
+            pthread_mutex_unlock(&encryption_mutex);
+            return false;
+        }
+    }
+
+    // Используем первые 32 байта общего секрета как ключ
+    memcpy(enc_ctx.key, pfs_ctx.shared_secret, 32);
+
+    // Генерируем уникальный IV для каждого сеанса
+    if (!generate_unique_iv(enc_ctx.iv, sizeof(enc_ctx.iv))) {
+        log_error("Failed to generate unique IV");
+        EVP_CIPHER_CTX_free(ctx);
+        pthread_mutex_unlock(&encryption_mutex);
+        return false;
+    }
+
+    // Инициализируем контекст шифрования
+    if (EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, enc_ctx.key, enc_ctx.iv) != 1) {
+        log_error("Failed to initialize encryption context");
+        EVP_CIPHER_CTX_free(ctx);
+        pthread_mutex_unlock(&encryption_mutex);
+        return false;
+    }
+
+    log_info("Encryption context initialized with PFS successfully");
+    pthread_mutex_unlock(&encryption_mutex);
+    return true;
+}
+
+
+void cleanup_pfs(void) {
+    pthread_mutex_lock(&encryption_mutex);
+
+    if (pfs_ctx.ecdh_key) {
+        EC_KEY_free(pfs_ctx.ecdh_key);
+        pfs_ctx.ecdh_key = NULL;
+    }
+
+    memset(pfs_ctx.shared_secret, 0, sizeof(pfs_ctx.shared_secret)); // Очищаем общий секрет
+
+    log_info("PFS context cleaned up successfully");
+    pthread_mutex_unlock(&encryption_mutex);
+}
+
 
 bool generate_unique_iv(unsigned char *iv, size_t iv_len) {
     if (!RAND_bytes(iv, iv_len)) {
