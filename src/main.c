@@ -288,6 +288,37 @@ if (socket_fd < 0) {
     return EXIT_FAILURE;
 }
 
+// Пример использования:
+if (!initialize_pfs()) {
+    log_error("Failed to initialize PFS");
+    return EXIT_FAILURE;
+}
+
+unsigned char public_key[65];
+size_t public_key_len = get_public_key(public_key, sizeof(public_key));
+if (public_key_len == 0) {
+    log_error("Failed to get public key");
+    return EXIT_FAILURE;
+}
+
+// отправка public_key другой стороне и получите её открытый ключ
+
+
+unsigned char peer_public_key[65]; // Define peer_public_key
+size_t peer_public_key_len = sizeof(peer_public_key); // Define peer_public_key_len
+
+// Assuming peer_public_key is filled with the actual public key data before this point
+
+if (!compute_shared_secret(peer_public_key, peer_public_key_len)) {
+    log_error("Failed to compute shared secret");
+    return EXIT_FAILURE;
+}
+
+if (!initialize_encryption_with_pfs()) {
+    log_error("Failed to initialize encryption with PFS");
+    return EXIT_FAILURE;
+}
+
 
 
     // Очистка ресурсов
