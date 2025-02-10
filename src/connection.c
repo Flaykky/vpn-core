@@ -4,17 +4,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-
 #include <openssl/types.h>
 #include <openssl/evp.h>
-
+#include <errno.h>
+#include <fcntl.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
 typedef SSIZE_T ssize_t;
 #pragma comment(lib, "ws2_32.lib")
-
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -22,12 +21,36 @@ typedef SSIZE_T ssize_t;
 #include <unistd.h>
 #endif
 
-#include <errno.h>
-#include <fcntl.h>
 
+typedef struct {
+    char ip[16];
+    int port;
+    bool is_available;
+} Proxy;
+
+static Proxy proxies[MAX_PROXIES];
+static size_t proxy_count = 0;
+
+void add_proxy(const char *ip, int port) {
+    if (proxy_count < MAX_PROXIES) {
+        strncpy(proxies[proxy_count].ip, ip, sizeof(proxies[proxy_count].ip));
+        proxies[proxy_count].port = port;
+        proxies[proxy_count].is_available = true;
+        proxy_count++;
+    }
+}
+
+Proxy get_available_proxy() {
+    for (size_t i = 0; i < proxy_count; i++) {
+        if (proxies[i].is_available) {
+            return proxies[i];
+        }
+    }
+    Proxy empty = {"", 0, false};
+    return empty;
+}
 
 static pthread_mutex_t connection_mutex = PTHREAD_MUTEX_INITIALIZER;
-
 
 struct sockaddr_in server_addr;
 memset(&server_addr, 0, sizeof(server_addr)); // Полная инициализация
