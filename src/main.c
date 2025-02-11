@@ -30,16 +30,25 @@ bool read_config_file(const char *filename, Config *config) {
         return false;
     }
 
+    
+
     char line[256];
-    while (fgets(line, sizeof(line), file)) {
+    while (fgets(line, sizeof(line), file) != NULL) {
         char *key = strtok(line, "=");
         char *value = strtok(NULL, "\n");
+        if (config->server_ip) {
+            free(config->server_ip);
+        }
+        config->server_ip = strdup(value);
+        
         if (key && value) {
             if (strcmp(key, "server_ip") == 0) {
                 config->server_ip = strdup(value);
             } else if (strcmp(key, "port") == 0) {
                 config->port = atoi(value);
             }
+
+            
         }
     }
 
@@ -52,7 +61,7 @@ bool read_config_file(const char *filename, Config *config) {
 }
 
 // Флаг для выхода из основного цикла
-static volatile bool terminate_flag = false;
+static volatile sig_atomic_t terminate_flag = 0;
 
 // Обработчик сигналов для graceful shutdown
 void signal_handler(int signum) {
@@ -122,6 +131,15 @@ int main(int argc, char *argv[]) {
     int proxy_port = 0;
 
     int opt;
+
+    
+
+    log_info("VPN Core started with arguments:");
+        for (int i = 0; i < argc; i++) {
+        log_info("Arg %d: %s", i, argv[i]);
+    }
+
+
     while ((opt = getopt_long(argc, argv, "m:s:p:x:y:", long_options, NULL)) != -1) {
         switch (opt) {
             case 'm':
@@ -148,8 +166,8 @@ int main(int argc, char *argv[]) {
     init_logging("vpn.log", LOG_LEVEL_INFO, true);
 
     // Обработка параметров командной строки
-    const char *server_ip = "127.0.0.1";
-    int server_port = 8080;
+
+
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
             server_ip = argv[++i];
@@ -197,127 +215,126 @@ int main(int argc, char *argv[]) {
 
     log_info("VPN core is running...");
 
-    // Основной цикл обработки данных
-#ifdef _WIN32
-    while (!terminate_flag) {
-        process_data(socket_fd, tun_fd); // Исправляем вызов функции
-    }
-#else
-    while (!terminate_flag) {
-        process_data(socket_fd, tun_fd); // Исправляем вызов функции
-    }
-#endif
-
-    log_info("Shutting down VPN core...");
-
-    Tunnel tunnel;
-    if (!setup_tunnel(&tunnel, socket_fd)) {
-    log_error("Failed to set up tunnel.");
-    return EXIT_FAILURE;
-}
-
-#ifdef _WIN32
-while (!terminate_flag) {
-    process_data_windows(socket_fd);
-    // Проверка флага завершения
-    if (should_terminate()) {
-        break;
-    }
-}
-#else
-while (!terminate_flag) {
-    if (use_udp) {
-        struct sockaddr_in server_addr;
-        memset(&server_addr, 0, sizeof(server_addr));
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_port = htons(server_port);
-        inet_pton(AF_INET, server_ip, &server_addr.sin_addr);
-
-        char buffer[1024];
-        ssize_t bytes_received = receive_udp_data(socket_fd, buffer, sizeof(buffer), &server_addr);
-        if (bytes_received > 0) {
-            log_info("Received %zd bytes via UDP", bytes_received);
-            write_to_tunnel(buffer, bytes_received);
-        } else if (bytes_received == 0) {
-            log_info("UDP connection closed by peer");
-            terminate_flag = true;
-        } else {
-            log_error("Error receiving UDP data");
+        // Основной цикл обработки данных
+    #ifdef _WIN32
+        while (!terminate_flag) {
+            process_data(socket_fd, tun_fd); // Исправляем вызов функции
         }
+    #else
+        while (!terminate_flag) {
+            process_data(socket_fd, tun_fd); // Исправляем вызов функции
+        }
+    #endif
+
+        log_info("Shutting down VPN core...");
+
+        Tunnel tunnel;
+        if (!setup_tunnel(&tunnel, socket_fd)) {
+        log_error("Failed to set up tunnel.");
+        return EXIT_FAILURE;
+    }
+
+    #ifdef _WIN32
+    while (!terminate_flag) {
+        process_data_windows(socket_fd);
+        // Проверка флага завершения
+        if (should_terminate()) {
+            break;
+        }
+    }
+    #else
+    while (!terminate_flag) {
+        if (use_udp) {
+            struct sockaddr_in server_addr;
+            memset(&server_addr, 0, sizeof(server_addr));
+            server_addr.sin_family = AF_INET;
+            server_addr.sin_port = htons(server_port);
+            inet_pton(AF_INET, server_ip, &server_addr.sin_addr);
+
+            char buffer[1024];
+            ssize_t bytes_received = receive_udp_data(socket_fd, buffer, sizeof(buffer), &server_addr);
+            if (bytes_received > 0) {
+                log_info("Received %zd bytes via UDP", bytes_received);
+                write_to_tunnel(buffer, bytes_received);
+            } else if (bytes_received == 0) {
+                log_info("UDP connection closed by peer");
+                terminate_flag = true;
+            } else {
+                log_error("Error receiving UDP data");
+            }
+        } else {
+            process_data(socket_fd, tun_fd);
+        }
+
+        // Проверка флага завершения
+        if (should_terminate()) {
+            break;
+        }
+    }
+    #endif
+
+
+
+
+
+
+    bool use_udp = false; // Флаг для использования UDP
+
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
+            server_ip = argv[++i];
+        } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
+            server_port = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--udp") == 0) {
+            use_udp = true; // Включаем UDP
+        }
+    }
+
+
+
+    // Установка соединения
+    int socket_fd = -1;
+    if (use_udp) {
+        socket_fd = establish_udp_connection(server_ip, server_port);
     } else {
-        process_data(socket_fd, tun_fd);
+        socket_fd = establish_connection(server_ip, server_port);
     }
 
-    // Проверка флага завершения
-    if (should_terminate()) {
-        break;
+    if (socket_fd < 0) {
+        log_error("Failed to establish connection.");
+        return EXIT_FAILURE;
     }
-}
-#endif
 
-
-
-
-// Обработка параметров командной строки
-const char *server_ip = "127.0.0.1";
-int server_port = 8080;
-bool use_udp = false; // Флаг для использования UDP
-
-for (int i = 1; i < argc; ++i) {
-    if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
-        server_ip = argv[++i];
-    } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
-        server_port = atoi(argv[++i]);
-    } else if (strcmp(argv[i], "--udp") == 0) {
-        use_udp = true; // Включаем UDP
+    // Пример использования:
+    if (!initialize_pfs()) {
+        log_error("Failed to initialize PFS");
+        return EXIT_FAILURE;
     }
-}
+
+    unsigned char public_key[65];
+    size_t public_key_len = get_public_key(public_key, sizeof(public_key));
+    if (public_key_len == 0) {
+        log_error("Failed to get public key");
+        return EXIT_FAILURE;
+    }
+
+    // отправка public_key другой стороне и получите её открытый ключ
 
 
+    unsigned char peer_public_key[65]; // Define peer_public_key
+    size_t peer_public_key_len = sizeof(peer_public_key); // Define peer_public_key_len
 
-// Установка соединения
-int socket_fd = -1;
-if (use_udp) {
-    socket_fd = establish_udp_connection(server_ip, server_port);
-} else {
-    socket_fd = establish_connection(server_ip, server_port);
-}
+    // Assuming peer_public_key is filled with the actual public key data before this point
 
-if (socket_fd < 0) {
-    log_error("Failed to establish connection.");
-    return EXIT_FAILURE;
-}
+    if (!compute_shared_secret(peer_public_key, peer_public_key_len)) {
+        log_error("Failed to compute shared secret");
+        return EXIT_FAILURE;
+    }
 
-// Пример использования:
-if (!initialize_pfs()) {
-    log_error("Failed to initialize PFS");
-    return EXIT_FAILURE;
-}
-
-unsigned char public_key[65];
-size_t public_key_len = get_public_key(public_key, sizeof(public_key));
-if (public_key_len == 0) {
-    log_error("Failed to get public key");
-    return EXIT_FAILURE;
-}
-
-// отправка public_key другой стороне и получите её открытый ключ
-
-
-unsigned char peer_public_key[65]; // Define peer_public_key
-size_t peer_public_key_len = sizeof(peer_public_key); // Define peer_public_key_len
-
-// Assuming peer_public_key is filled with the actual public key data before this point
-
-if (!compute_shared_secret(peer_public_key, peer_public_key_len)) {
-    log_error("Failed to compute shared secret");
-    return EXIT_FAILURE;
-}
-
-if (!initialize_encryption_with_pfs()) {
-    log_error("Failed to initialize encryption with PFS");
-    return EXIT_FAILURE;
-}
+    if (!initialize_encryption_with_pfs()) {
+        log_error("Failed to initialize encryption with PFS");
+        return EXIT_FAILURE;
+    }
 
 
 
