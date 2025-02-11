@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 
+
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
@@ -20,42 +21,29 @@ typedef SSIZE_T ssize_t;
 #include <arpa/inet.h>
 #include <unistd.h>
 #endif
-
-
-typedef struct {
-    char ip[16];
-    int port;
-    bool is_available;
-} Proxy;
-
-static Proxy proxies[MAX_PROXIES];
-static size_t proxy_count = 0;
-
-void add_proxy(const char *ip, int port) {
-    if (proxy_count < MAX_PROXIES) {
-        strncpy(proxies[proxy_count].ip, ip, sizeof(proxies[proxy_count].ip));
-        proxies[proxy_count].port = port;
-        proxies[proxy_count].is_available = true;
-        proxy_count++;
-    }
-}
-
-Proxy get_available_proxy() {
-    for (size_t i = 0; i < proxy_count; i++) {
-        if (proxies[i].is_available) {
-            return proxies[i];
-        }
-    }
-    Proxy empty = {"", 0, false};
-    return empty;
-}
-
-static pthread_mutex_t connection_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-struct sockaddr_in server_addr;
+/*
+static struct sockaddr_in server_addr;
 memset(&server_addr, 0, sizeof(server_addr)); // Полная инициализация
 server_addr.sin_family = AF_INET;
 server_addr.sin_port = htons(port);
+*/
+
+ssl_ctx = SSL_CTX_new(TLS_client_method());
+if (!ssl_ctx) {
+    log_error("Failed to create SSL context: %s", ERR_error_string(ERR_get_error(), NULL));
+    return false;
+}
+
+// Добавляем установку глубины цепочки сертификатов:
+SSL_CTX_set_verify_depth(ssl_ctx, 4);
+
+SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, NULL);
+if (!SSL_CTX_load_verify_locations(ssl_ctx, "ca-certificates.crt", NULL)) {
+    log_error("Failed to load CA certificates: %s", ERR_error_string(ERR_get_error(), NULL));
+    SSL_CTX_free(ssl_ctx);
+    return false;
+}
+
 
 static void cleanup_winsock(void) {
 #ifdef _WIN32
@@ -63,43 +51,49 @@ static void cleanup_winsock(void) {
 #endif
 }
 
+
+bool verify_certificate(SSL *ssl, const char *hostname) {
+    X509 *cert = SSL_get_peer_certificate(ssl);
+    if (!cert) {
+        log_error("No certificate presented by the server");
+        return false;
+    }
+
+    // Проверка имени хоста
+    if (X509_check_host(cert, hostname, strlen(hostname), 0, NULL) != 1) {
+        log_error("Certificate does not match hostname: %s", hostname);
+        X509_free(cert);
+        return false;
+    }
+
+    X509_free(cert);
+    return true;
+}
+
 // Установка TCP-туннеля
 int establish_tcp_tunnel(const char *server_ip, int port) {
-    int sockfd;
-    struct sockaddr_in server_addr;
-
-    // Инициализация Winsock на Windows
-    init_winsock();
-
-    // Создание сокета
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
         log_error("Socket creation failed");
         cleanup_winsock();
         return -1;
     }
 
-    // Настройка адреса сервера
+    struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
 
-    // Преобразование IP-адреса из текстового формата в сетевой
-if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-    if (errno == EAFNOSUPPORT) {
-        log_error("Invalid address family for IP address");
-    } else {
-        log_error("Invalid or unsupported IP address format");
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        log_error("Invalid address/ Address not supported");
+        close(sockfd);
+        cleanup_winsock();
+        return -1;
     }
-    close_connection(sockfd);
-    cleanup_winsock();
-    return -1;
-}
 
-    // Подключение к серверу
     if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         log_error("Connection failed");
-        close_connection(sockfd);
+        close(sockfd);
         cleanup_winsock();
         return -1;
     }
@@ -108,16 +102,26 @@ if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
     return sockfd;
 }
 
+
+
 // Инициализация Winsock на Windows
 static void init_winsock(void) {
-#ifdef _WIN32
-    WSADATA wsa_data;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
-        log_error("WSAStartup failed");
-        exit(EXIT_FAILURE);
+    #ifdef _WIN32
+        WSADATA wsa_data;
+        int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+        if (result != 0) {
+            log_error("WSAStartup failed with error: %d", WSAGetLastError());
+            exit(EXIT_FAILURE);
+        }
+    #endif
     }
-#endif
+
+    
+static inline bool is_fd_valid(int fd) {
+    return fd >= 0;
 }
+    
+
 
 
 
@@ -175,8 +179,7 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
             log_error("Failed to resolve hostname: %s", server_ip);
             close(sockfd);
             cleanup_winsock();
-            pthread_mutex_unlock(&connection_mutex);
-            return false;
+            return -1;
         }
     }
 
@@ -191,8 +194,13 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
 
     // Сохранение состояния соединения
     state->socket_fd = sockfd;
-    snprintf(state->server_ip, MAX_IP_LENGTH, "%s", server_ip); // Безопасное копирование строки
-    state->port = port;
+    if (strlen(server_ip) >= MAX_IP_LENGTH) {
+        log_error("IP address exceeds maximum length");
+        pthread_mutex_unlock(&connection_mutex);
+        return false;
+    }
+    strncpy(state->server_ip, server_ip, MAX_IP_LENGTH - 1);
+    state->server_ip[MAX_IP_LENGTH - 1] = '\0'; // Гарантированное завершение строки    state->port = port;
     state->is_connected = true;
 
     log_info("Connection established successfully to %s:%d", server_ip, port);
@@ -202,7 +210,8 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
 
 // Закрытие соединения
 void close_connection(int socket_fd) {
-    pthread_mutex_lock(&connection_mutex);
+    state->server_ip[MAX_IP_LENGTH - 1] = '\0'; // Гарантированное завершение строки
+    state->port = port;
     if (socket_fd >= 0) {
 #ifdef _WIN32
         closesocket(socket_fd);
@@ -222,8 +231,38 @@ int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const cha
     // ... [остальной код]
 
     // Чтение ответа от прокси
-    char response[256];
-    ssize_t bytes_received = recv(sockfd, response, sizeof(response) - 1, 0);
+    #define RESPONSE_BUFFER_SIZE 1024
+    char *response = malloc(RESPONSE_BUFFER_SIZE);
+    if (!response) {
+        log_error("Failed to allocate memory for proxy response");
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+    
+    ssize_t bytes_received = recv(sockfd, response, RESPONSE_BUFFER_SIZE - 1, 0);
+    if (bytes_received > 0) {
+        response[bytes_received] = '\0';
+    } else {
+        free(response);
+        log_error("Failed to receive response from proxy");
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+    
+    // Проверка ответа
+    if (strstr(response, "200 Connection established") == NULL) {
+        log_error("Proxy connection failed: %s", response);
+        free(response);
+        close_connection(sockfd);
+        cleanup_winsock();
+        return -1;
+    }
+    
+    free(response);
+    log_info("HTTPS proxy tunnel established successfully through %s:%d", proxy_ip, proxy_port);
+
     if (bytes_received <= 0) {
         log_error("Failed to receive response from proxy");
         close_connection(sockfd);
@@ -245,7 +284,22 @@ int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const cha
 }
 
 
-static SSL_CTX *ssl_ctx = NULL;
+typedef struct {
+    SSL_CTX *ssl_ctx;
+} EncryptionContext;
+
+EncryptionContext encryption_ctx;
+
+bool initialize_ssl(EncryptionContext *ctx) {
+    ctx->ssl_ctx = SSL_CTX_new(TLS_client_method());
+    if (!ctx->ssl_ctx) {
+        log_error("Failed to create SSL context");
+        return false;
+    }
+    // Настройка проверки сертификатов...
+    return true;
+}
+
 SSL_CTX_set_verify_depth(ssl_ctx, 4); // Устанавливаем максимальную глубину цепочки сертификатов
 
 
@@ -256,21 +310,24 @@ bool initialize_ssl(void) {
 
     ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!ssl_ctx) {
-        log_error("Failed to create SSL context: %s", ERR_error_string(ERR_get_error(), NULL));
+        log_error("Failed to create SSL context");
+        ERR_print_errors_fp(stderr); // Вывод ошибок OpenSSL
         return false;
     }
 
     // Настройка проверки сертификатов
     SSL_CTX_set_verify(ssl_ctx, SSL_VERIFY_PEER, NULL);
     if (!SSL_CTX_load_verify_locations(ssl_ctx, "ca-certificates.crt", NULL)) {
-        log_error("Failed to load CA certificates: %s", ERR_error_string(ERR_get_error(), NULL));
-        SSL_CTX_free(ssl_ctx);
+        log_error("Failed to load CA certificates");
+        SSL_CTX_free(ssl_ctx); // Очистка контекста
         return false;
     }
 
+    // Установка глубины проверки цепочки сертификатов
+    SSL_CTX_set_verify_depth(ssl_ctx, 4);
+
     return true;
 }
-
 int establish_connection(const char *server_ip, int port) {
     int sockfd;
     struct sockaddr_in server_addr;
@@ -349,6 +406,13 @@ ssize_t send_udp_data(int socket_fd, const void *data, size_t length, const stru
     if (!is_socket_valid(socket_fd)) {
         log_error("Invalid socket descriptor");
         return -1;
+
+        if (!is_fd_valid(socket_fd)) {
+            log_error("Invalid socket descriptor");
+            return -1;
+        }
+        
+
     }
 
     ssize_t bytes_sent = sendto(socket_fd, data, length, 0, (const struct sockaddr *)server_addr, sizeof(*server_addr));
@@ -369,6 +433,12 @@ ssize_t receive_udp_data(int socket_fd, void *buffer, size_t length, struct sock
     if (!is_socket_valid(socket_fd)) {
         log_error("Invalid socket descriptor");
         return -1;
+
+        if (!is_fd_valid(socket_fd)) {
+            log_error("Invalid socket descriptor");
+            return -1;
+        }
+        
     }
 
     socklen_t addr_len = sizeof(*client_addr);
@@ -386,6 +456,18 @@ ssize_t receive_udp_data(int socket_fd, void *buffer, size_t length, struct sock
     }
 
     return bytes_received;
+}
+
+
+
+void add_proxy(const char *ip, int port) {
+    if (proxy_count < MAX_PROXIES) {
+        strncpy(proxies[proxy_count].ip, ip, sizeof(proxies[proxy_count].ip) - 1);
+        proxies[proxy_count].ip[sizeof(proxies[proxy_count].ip) - 1] = '\0';
+        proxies[proxy_count].port = port;
+        proxies[proxy_count].is_available = true;
+        proxy_count++;
+    }
 }
 
 
@@ -440,6 +522,8 @@ ssize_t receive_data(ConnectionState *state, void *buffer, size_t length) {
 }
 
 
+
+
 int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
 if (result != 0) {
     log_error("WSAStartup failed with error: %d", WSAGetLastError());
@@ -463,7 +547,9 @@ bool reconnect(ConnectionState *state) {
     }
 
     log_info("Attempting to reconnect to %s:%d", state->server_ip, state->port);
-    close_connection(state);
+    // Исправляем вызов: передаем сокет и обновляем состояние
+    close_connection(state->socket_fd);
+    state->is_connected = false;
     bool success = initialize_connection(state, state->server_ip, state->port);
 
     pthread_mutex_unlock(&connection_mutex);
