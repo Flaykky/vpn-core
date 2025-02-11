@@ -8,7 +8,8 @@
 #include <openssl/evp.h>
 #include <errno.h>
 #include <fcntl.h>
-
+#include "ssl.h"
+#include "ssl2.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -33,6 +34,7 @@ if (!ssl_ctx) {
     log_error("Failed to create SSL context: %s", ERR_error_string(ERR_get_error(), NULL));
     return false;
 }
+
 
 // Добавляем установку глубины цепочки сертификатов:
 SSL_CTX_set_verify_depth(ssl_ctx, 4);
