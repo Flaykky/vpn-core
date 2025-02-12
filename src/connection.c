@@ -72,7 +72,7 @@ bool verify_certificate(SSL *ssl, const char *hostname) {
     return true;
 }
 
-// Установка TCP-туннеля
+// Пример для establish_tcp_tunnel:
 int establish_tcp_tunnel(const char *server_ip, int port) {
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
@@ -254,8 +254,8 @@ int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const cha
     }
     
     // Проверка ответа
-    if (strstr(response, "200 Connection established") == NULL) {
-        log_error("Proxy connection failed: %s", response);
+    if (strncmp(response, "HTTP/1.1 200 Connection established", 35) != 0) {
+        log_error("Proxy connection failed: unexpected response");
         free(response);
         close_connection(sockfd);
         cleanup_winsock();
@@ -290,7 +290,6 @@ typedef struct {
     SSL_CTX *ssl_ctx;
 } EncryptionContext;
 
-EncryptionContext encryption_ctx;
 
 bool initialize_ssl(EncryptionContext *ctx) {
     ctx->ssl_ctx = SSL_CTX_new(TLS_client_method());
