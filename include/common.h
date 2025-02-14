@@ -23,7 +23,7 @@
     } \
 } while(0)
 
-#define log_error(fmt, ...) log_message(LOG_LEVEL_ERROR, "ERROR: " fmt, ##__VA_ARGS__)
+#define log_error(fmt, ...) log_message(LOG_LEVEL_ERROR, "ERROR: " fmt , ##__VA_ARGS__)
 #define log_warning(fmt, ...) log_message(LOG_LEVEL_WARNING, "WARNING: " fmt, ##__VA_ARGS__)
 #define log_info(fmt, ...) log_message(LOG_LEVEL_INFO, "INFO: " fmt, ##__VA_ARGS__)
 
