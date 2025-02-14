@@ -6,6 +6,11 @@
 #include <openssl/types.h>
 #include <openssl/ec.h>
 
+static pthread_mutex_t encryption_mutex = PTHREAD_MUTEX_INITIALIZER;
+static EVP_CIPHER_CTX *ctx = NULL;
+static unsigned char key[32];
+static unsigned char iv[16];
+
 
 typedef struct {
     EC_KEY *ecdh_key; // Эфемерный ключ для ECDH
@@ -218,6 +223,8 @@ bool encrypt_data_with_gcm(const void *input, size_t input_len, void *output, si
     if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), NULL, enc_ctx.key, enc_ctx.iv) != 1) {
         log_error("Failed to initialize encryption context");
         pthread_mutex_unlock(&encryption_mutex);
+        return false;
+    }
       
 
     // Шифрование данных
