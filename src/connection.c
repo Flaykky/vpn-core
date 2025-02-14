@@ -109,7 +109,7 @@ int establish_tcp_tunnel(const char *server_ip, int port) {
 }
 
 
-        #ifdef _WIN32
+#ifdef _WIN32
         static void init_winsock(void) {
             WSADATA wsa_data;
             int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
@@ -118,14 +118,15 @@ int establish_tcp_tunnel(const char *server_ip, int port) {
                 exit(EXIT_FAILURE);
             }
         }
-        #endif
-        int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-        if (result != 0) {
-            log_error("WSAStartup failed with error: %d", WSAGetLastError());
-            exit(EXIT_FAILURE);
-        }
-    #endif
-    }
+#endif
+
+int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+if (result != 0) {
+    log_error("WSAStartup failed with error: %d", WSAGetLastError());
+    exit(EXIT_FAILURE);
+}
+        
+    
 
     
 static inline bool is_fd_valid(int fd) {
