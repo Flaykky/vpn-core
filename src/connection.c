@@ -13,6 +13,10 @@
 #include "ssl2.h"
 #include "ssl_lib.c"
 #include <ssl.h>
+#include <unistd.h>
+#include <stdbool.h>
+#include "ssl_lib.c"
+
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -23,12 +27,36 @@ typedef SSIZE_T ssize_t;
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <unistd.h>
 #endif
+
+typedef struct {
+    SSL_CTX *ssl_ctx;
+} EncryptionContext;
+typedef struct {
+    SSL_CTX *ssl_ctx;
+} EncryptionContext;
+
+typedef struct {
+    int socket_fd;
+    char server_ip[MAX_IP_LENGTH];
+    int port;
+    bool is_connected;
+    SSL_CTX *ssl_ctx; // Добавляем поле для SSL контекста
+} ConnectionState;
+
 
 pthread_mutex_t connection_mutex;
 WSADATA wsa_data;
 static SSL_CTX *ssl_ctx = NULL;
+
+
+static void init_winsock(void) {
+    int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    if (result != 0) {
+        log_error("WSAStartup failed with error: %d", WSAGetLastError());
+        exit(EXIT_FAILURE);
+    }
+}
 
 static bool initialize_ssl_context(void) {
     ssl_ctx = SSL_CTX_new(TLS_client_method());
@@ -120,12 +148,7 @@ int establish_tcp_tunnel(const char *server_ip, int port) {
         }
 #endif
 
-int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-if (result != 0) {
-    log_error("WSAStartup failed with error: %d", WSAGetLastError());
-    exit(EXIT_FAILURE);
-}
-        
+
     
 
     
@@ -145,7 +168,7 @@ static bool resolve_hostname(const char *hostname, struct sockaddr_in *addr) {
     hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(hostname, NULL, &hints, &res) != 0) {
-        log_error("Failed to resolve hostname: %s", hostname);
+        log_error("Failed to resolve hostname: %s");
         return false;
     }
 
@@ -161,14 +184,15 @@ static bool resolve_hostname(const char *hostname, struct sockaddr_in *addr) {
 
 // Инициализация соединения
 bool initialize_connection(ConnectionState *state, const char *server_ip, int port) {
-    pthread_mutex_lock(&connection_mutex);
-
-    if (!state) {
-        log_error("Invalid connection state");
-        pthread_mutex_unlock(&connection_mutex);
+    // Проверка входных параметров
+    if (!state || !server_ip || port <= 0 || port > 65535) {
+        log_error("Invalid connection state, server IP, or port");
         return false;
     }
 
+    pthread_mutex_lock(&connection_mutex);
+
+    // Инициализация Winsock (только для Windows)
     init_winsock();
 
     // Создание сокета
@@ -186,12 +210,15 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
 
+    // Преобразование IP-адреса из текстового формата в сетевой
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        // Если преобразование не удалось, пытаемся разрешить имя хоста
         if (!resolve_hostname(server_ip, &server_addr)) {
             log_error("Failed to resolve hostname: %s", server_ip);
             close(sockfd);
             cleanup_winsock();
-            return -1;
+            pthread_mutex_unlock(&connection_mutex);
+            return false;
         }
     }
 
@@ -206,39 +233,86 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
 
     // Сохранение состояния соединения
     state->socket_fd = sockfd;
-    if (strlen(server_ip) >= MAX_IP_LENGTH) {
-        log_error("IP address exceeds maximum length");
-        pthread_mutex_unlock(&connection_mutex);
-        return false;
+    strncpy(state->server_ip, server_ip, MAX_IP_LENGTH - 1);
+    state->server_ip[MAX_IP_LENGTH - 1] = '\0'; // Гарантированное завершение строки
+    state->port = port;
+    state->is_connected = true;
+
+    log_info("Connection established successfully to %s:%d", server_ip, port);
+    pthread_mutex_unlock(&connection_mutex);
+    return true;
+}
+
+
+
+
+
+void close_connection_state(ConnectionState *state) {
+    if (!state) {
+        log_error("Invalid connection state");
+        return;
     }
-void close_connection(ConnectionState *state) {
+
+    pthread_mutex_lock(&connection_mutex);
+
+    // Закрытие сокета
     if (state->socket_fd >= 0) {
 #ifdef _WIN32
         closesocket(state->socket_fd);
 #else
         close(state->socket_fd);
 #endif
-        cleanup_winsock();
-        log_info("Connection closed successfully");
+        log_info("Socket closed successfully");
+        state->socket_fd = -1; // Обнуление дескриптора сокета
     } else {
-        log_error("Invalid socket descriptor");
+        log_warning("Socket descriptor is already invalid or closed");
     }
+
+    // Очистка контекста шифрования (если используется)
+    if (state->ssl_ctx) {
+        SSL_CTX_free(state->ssl_ctx);
+        state->ssl_ctx = NULL;
+        log_info("SSL context cleaned up successfully");
+    }
+
+    // Сброс состояния соединения
     state->is_connected = false;
+    memset(state->server_ip, 0, MAX_IP_LENGTH); // Очистка IP-адреса
+    state->port = 0;
+
+    // Очистка Winsock (только для Windows)
+    cleanup_winsock();
+
+    pthread_mutex_unlock(&connection_mutex);
 }
 
-    log_info("Connection established successfully to %s:%d", server_ip, port);
-    pthread_mutex_unlock(&connection_mutex);
-    return true;
+
 int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const char *target_host, int target_port) {
-    int sockfd = establish_tcp_tunnel(proxy_ip, proxy_port);
-    if (sockfd < 0) {
+    if (!proxy_ip || !target_host || proxy_port <= 0 || target_port <= 0) {
+        log_error("Invalid proxy or target parameters");
         return -1;
     }
 
-    // Отправка запроса CONNECT
-    char request[256];
-    snprintf(request, sizeof(request), "CONNECT %s:%d HTTP/1.1\r\nHost: %s:%d\r\n\r\n", target_host, target_port, target_host, target_port);
-    if (send(sockfd, request, strlen(request), 0) < 0) {
+    // Установка TCP-соединения с прокси-сервером
+    int sockfd = establish_tcp_tunnel(proxy_ip, proxy_port);
+    if (sockfd < 0) {
+        log_error("Failed to establish TCP tunnel to proxy");
+        return -1;
+    }
+
+    // Формирование HTTP CONNECT запроса
+    char request[512]; // Увеличен размер буфера для безопасности
+    int ret = snprintf(request, sizeof(request), "CONNECT %s:%d HTTP/1.1\r\nHost: %s:%d\r\n\r\n",
+                       target_host, target_port, target_host, target_port);
+    if (ret < 0 || ret >= sizeof(request)) {
+        log_error("Failed to format CONNECT request");
+        close_connection(sockfd);
+        return -1;
+    }
+
+    // Отправка запроса на прокси
+    ssize_t bytes_sent = send(sockfd, request, strlen(request), 0);
+    if (bytes_sent < 0) {
         log_error("Failed to send CONNECT request to proxy");
         close_connection(sockfd);
         return -1;
@@ -253,9 +327,9 @@ int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const cha
         close_connection(sockfd);
         return -1;
     }
-    response[bytes_received] = '\0'; // Обязательно завершаем строку
 
-    // Проверка успешности подключения
+    // Завершение строки и проверка ответа
+    response[bytes_received] = '\0'; // Обязательно завершаем строку
     if (strstr(response, "200 Connection established") == NULL) {
         log_error("Proxy connection failed: %s", response);
         close_connection(sockfd);
@@ -265,35 +339,11 @@ int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const cha
     log_info("HTTPS proxy tunnel established successfully through %s:%d", proxy_ip, proxy_port);
     return sockfd;
 }
-    log_info("HTTPS proxy tunnel established successfully through %s:%d", proxy_ip, proxy_port);
-
-    if (bytes_received <= 0) {
-        log_error("Failed to receive response from proxy");
-        close_connection(sockfd);
-        cleanup_winsock();
-        return -1;
-    }
-    response[bytes_received] = '\0'; // Обязательно завершаем строку
-
-    // Проверка успешности подключения
-    if (strstr(response, "200 Connection established") == NULL) {
-        log_error("Proxy connection failed: %s", response);
-        close_connection(sockfd);
-        cleanup_winsock();
-        return -1;
-    }
-
-    log_info("HTTPS proxy tunnel established successfully through %s:%d", proxy_ip, proxy_port);
-    return sockfd;
-}
 
 
-typedef struct {
-    SSL_CTX *ssl_ctx;
-} EncryptionContext;
-typedef struct {
-    SSL_CTX *ssl_ctx;
-} EncryptionContext;
+
+
+
 
 bool initialize_ssl(EncryptionContext *ctx) {
     ctx->ssl_ctx = SSL_CTX_new(TLS_client_method());
@@ -315,8 +365,7 @@ bool initialize_ssl(EncryptionContext *ctx) {
 
     return true;
 }
-    return true;
-}
+
 int establish_connection(const char *server_ip, int port) {
     int sockfd;
     struct sockaddr_in server_addr;
@@ -393,27 +442,18 @@ int establish_udp_connection(const char *server_ip, int port) {
 // Отправка данных через UDP
 ssize_t send_udp_data(int socket_fd, const void *data, size_t length, const struct sockaddr_in *server_addr) {
     if (!is_socket_valid(socket_fd)) {
-        log_error("Invalid socket descriptor");
-        return -1;
-
-        if (!is_fd_valid(socket_fd)) {
-            log_error("Invalid socket descriptor");
-            return -1;
-        }
-        
-
+    log_error("Invalid socket descriptor");
+    return -1;
     }
-
     ssize_t bytes_sent = sendto(socket_fd, data, length, 0, (const struct sockaddr *)server_addr, sizeof(*server_addr));
     if (bytes_sent < 0) {
 #ifdef _WIN32
-        log_error("Sendto failed");
+    log_error("Sendto failed");
 #else
-        perror("Sendto failed");
+    perror("Sendto failed");
 #endif
-        return -1;
+    return -1;
     }
-
     return bytes_sent;
 }
 
@@ -449,15 +489,7 @@ ssize_t receive_udp_data(int socket_fd, void *buffer, size_t length, struct sock
 
 
 
-void add_proxy(const char *ip, int port) {
-    if (proxy_count < MAX_PROXIES) {
-        strncpy(proxies[proxy_count].ip, ip, sizeof(proxies[proxy_count].ip) - 1);
-        proxies[proxy_count].ip[sizeof(proxies[proxy_count].ip) - 1] = '\0';
-        proxies[proxy_count].port = port;
-        proxies[proxy_count].is_available = true;
-        proxy_count++;
-    }
-}
+
 
 
 // Проверка состояния соединения
@@ -469,35 +501,24 @@ typedef struct {
     bool is_available;
 } Proxy;
 
+
+
 static Proxy proxies[MAX_PROXIES];
 static int proxy_count = 0;
 
 void add_proxy(const char *ip, int port) {
     if (proxy_count < MAX_PROXIES) {
-        strncpy(proxies[proxy_count].ip, ip, sizeof(proxies[proxy_count].ip) - 1);
-        proxies[proxy_count].ip[sizeof(proxies[proxy_count].ip) - 1] = '\0';
-        proxies[proxy_count].port = port;
-        proxies[proxy_count].is_available = true;
-        proxy_count++;
+    strncpy(proxies[proxy_count].ip, ip, sizeof(proxies[proxy_count].ip) - 1);
+    proxies[proxy_count].ip[sizeof(proxies[proxy_count].ip) - 1] = '\0';
+    proxies[proxy_count].port = port;
+    proxies[proxy_count].is_available = true;
+    proxy_count++;
     }
-
-        pthread_mutex_unlock(&connection_mutex);
-        return -1;
-
-
-    ssize_t bytes_sent = send(state->socket_fd, data, length, 0);
-    if (bytes_sent < 0) {
-        log_error("Send failed: %s", strerror(errno));
-        pthread_mutex_unlock(&connection_mutex);
-        return -1;
-    } else if (bytes_sent == 0) {
-        log_warning("Connection closed by peer during send");
-        state->is_connected = false;
-    }
-
-    pthread_mutex_unlock(&connection_mutex);
-    return bytes_sent;
 }
+
+
+
+
 
 ssize_t receive_data(ConnectionState *state, void *buffer, size_t length) {
     pthread_mutex_lock(&connection_mutex);
@@ -523,14 +544,6 @@ ssize_t receive_data(ConnectionState *state, void *buffer, size_t length) {
 
 
 
-
-int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-
-if (result != 0) {
-    log_error("WSAStartup failed with error: %d", WSAGetLastError());
-    exit(EXIT_FAILURE);
-}
-
 // Переподключение при разрыве
 bool reconnect(ConnectionState *state) {
     pthread_mutex_lock(&connection_mutex);
@@ -551,8 +564,15 @@ bool reconnect(ConnectionState *state) {
     // Исправляем вызов: передаем сокет и обновляем состояние
     close_connection(state->socket_fd);
     state->is_connected = false;
-    bool success = initialize_connection(state, state->server_ip, state->port);
 
+
+    if (!state || !state->server_ip) {
+        log_error("Invalid connection state or server IP");
+        pthread_mutex_unlock(&connection_mutex);
+        return false;
+    }
+    bool success = initialize_connection(state, state->server_ip, state->port);
     pthread_mutex_unlock(&connection_mutex);
+
     return success;
 }
