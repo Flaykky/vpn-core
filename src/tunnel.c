@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <basetsd.h>
 
 // Определение ssize_t для Windows
 #ifdef _WIN32
