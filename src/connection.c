@@ -17,8 +17,7 @@
 #include <stdbool.h>
 #include "ssl_lib.c"
 #include <basetsd.h>
-
-
+#include <sys/time.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -245,7 +244,58 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
 }
 
 
+bool set_socket_timeouts(int socket_fd, int send_timeout_sec, int recv_timeout_sec) {
+    if (!is_socket_valid(socket_fd)) {
+        log_error("Invalid socket descriptor");
+        return false;
+    }
 
+    struct timeval send_timeout = {send_timeout_sec, 0};
+    struct timeval recv_timeout = {recv_timeout_sec, 0};
+
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&send_timeout, sizeof(send_timeout)) < 0) {
+        log_error("Failed to set send timeout");
+        return false;
+    }
+
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&recv_timeout, sizeof(recv_timeout)) < 0) {
+        log_error("Failed to set receive timeout");
+        return false;
+    }
+
+    log_info("Socket timeouts set successfully: send=%d sec, recv=%d sec", send_timeout_sec, recv_timeout_sec);
+    return true;
+}
+
+bool is_server_reachable(const char *server_ip, int port) {
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        log_error("Socket creation failed");
+        return false;
+    }
+
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        log_error("Invalid address or address not supported");
+        close(sockfd);
+        return false;
+    }
+
+    int result = connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+    close(sockfd);
+
+    if (result < 0) {
+        log_warning("Server %s:%d is unreachable", server_ip, port);
+        return false;
+    }
+
+    log_info("Server %s:%d is reachable", server_ip, port);
+    return true;
+}
 
 
 void close_connection_state(ConnectionState *state) {
