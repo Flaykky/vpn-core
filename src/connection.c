@@ -16,12 +16,13 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include "ssl_lib.c"
+#include <basetsd.h>
+
 
 
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
-typedef SSIZE_T ssize_t;
 #pragma comment(lib, "ws2_32.lib")
 #else
 #include <sys/socket.h>
