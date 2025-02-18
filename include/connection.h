@@ -2,17 +2,20 @@
 #define CONNECTION_H
 
 #include "common.h"
+#include <unistd.h>
 #include <stdbool.h>
-
+#include <basetsd.h>
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+
+typedef SSIZE_T ssize_t;
+#pragma comment(lib, "ws2_32.lib")
 
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <unistd.h>
 #endif
 
 // Тип для описания состояния соединения
@@ -28,6 +31,12 @@ bool initialize_connection(ConnectionState *state, const char *server_ip, int po
 
 // Закрытие соединения
 void close_connection(ConnectionState *state);
+
+// Установка таймаутов для сокета
+bool set_socket_timeouts(int socket_fd, int send_timeout_sec, int recv_timeout_sec);
+
+// Проверка доступности сервера
+bool is_server_reachable(const char *server_ip, int port);
 
 // Проверка состояния соединения
 bool is_socket_valid(const ConnectionState *state);
