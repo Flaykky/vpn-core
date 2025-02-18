@@ -27,6 +27,47 @@ typedef struct {
 
 static EncryptionContext enc_ctx;
 
+
+void secure_clear_memory(void *ptr, size_t size) {
+    if (ptr) {
+        volatile unsigned char *p = (volatile unsigned char *)ptr;
+        while (size--) {
+            *p++ = 0;
+        }
+    }
+}
+
+void cleanup_encryption_securely(void) {
+    pthread_mutex_lock(&encryption_mutex);
+
+    if (ctx) {
+        EVP_CIPHER_CTX_free(ctx);
+        ctx = NULL;
+    }
+
+    // Очистка ключей и IV
+    secure_clear_memory(key, sizeof(key));
+    secure_clear_memory(iv, sizeof(iv));
+
+    log_info("Encryption context and keys securely cleaned up");
+    pthread_mutex_unlock(&encryption_mutex);
+}
+
+bool generate_unique_iv(unsigned char *iv_out, size_t iv_len) {
+    if (!iv_out || iv_len != 16) {
+        log_error("Invalid IV buffer or length");
+        return false;
+    }
+
+    if (!RAND_bytes(iv_out, iv_len)) {
+        log_error("Failed to generate unique IV");
+        return false;
+    }
+
+    log_info("Unique IV generated successfully");
+    return true;
+}
+
 bool initialize_pfs(void) {
     pthread_mutex_lock(&encryption_mutex);
 
