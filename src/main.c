@@ -9,19 +9,15 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
-
-#ifdef _WIN32
-typedef SSIZE_T ssize_t;
-#include <windows.h>
-
-#pragma comment(lib, "wintun.lib")
-#else
 #include <unistd.h>
-#endif
-
+#include <basetsd.h>
 #include <getopt.h>
 
-
+#ifdef _WIN32
+#include <windows.h>
+#pragma comment(lib, "wintun.lib")
+#else
+#endif
 
 bool read_config_file(const char *filename, Config *config) {
     FILE *file = fopen(filename, "r");
