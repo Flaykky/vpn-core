@@ -26,30 +26,20 @@ bool read_config_file(const char *filename, Config *config) {
         return false;
     }
 
-    
-
     char line[256];
-    while (fgets(line, sizeof(line), file) != NULL) {
+    while (fgets(line, sizeof(line), file)) {
         char *key = strtok(line, "=");
         char *value = strtok(NULL, "\n");
-        if (config->server_ip) {
-            free(config->server_ip);
-        }
-        config->server_ip = strdup(value);
-        
+
         if (key && value) {
             if (strcmp(key, "server_ip") == 0) {
+                free(config->server_ip); // Освобождаем предыдущее значение
                 config->server_ip = strdup(value);
             } else if (strcmp(key, "port") == 0) {
                 config->port = atoi(value);
             }
-
-            
         }
     }
-
-
-
 
     fclose(file);
     log_info("Configuration loaded from file: %s", filename);
@@ -59,7 +49,6 @@ bool read_config_file(const char *filename, Config *config) {
 // Флаг для выхода из основного цикла
 static volatile sig_atomic_t terminate_flag = 0;
 
-// Обработчик сигналов для graceful shutdown
 void signal_handler(int signum) {
     if (signum == SIGINT || signum == SIGTERM) {
         log_info("Shutdown signal received, terminating...");
@@ -67,22 +56,35 @@ void signal_handler(int signum) {
     }
 }
 
+int establish_connection_with_proxy(const char *proxy_ip, int proxy_port, const char *target_host, int target_port) {
+    int sockfd = establish_https_proxy_tunnel(proxy_ip, proxy_port, target_host, target_port);
+    if (sockfd < 0) {
+        log_error("Failed to establish HTTPS proxy tunnel");
+        return -1;
+    }
 
-
+    log_info("HTTPS proxy tunnel established successfully through %s:%d", proxy_ip, proxy_port);
+    return sockfd;
+}
 
 
 void process_data(int socket_fd, Tunnel *tunnel) {
     char buffer[1024];
     ssize_t bytes_read;
 
-    // Читаем данные из туннеля
+    // Чтение данных из туннеля
     bytes_read = read_from_tunnel(tunnel, buffer, sizeof(buffer));
     if (bytes_read > 0) {
-        // Шифруем данные
         size_t encrypted_len;
-        encrypt_data(buffer, bytes_read, buffer, &encrypted_len);
-        // Отправляем зашифрованные данные через сокет
-        send_data(socket_fd, buffer, encrypted_len);
+        if (!encrypt_data(buffer, bytes_read, buffer, &encrypted_len)) {
+            log_error("Encryption failed");
+            return;
+        }
+
+        if (send_data(socket_fd, buffer, encrypted_len) < 0) {
+            log_error("Failed to send encrypted data");
+            return;
+        }
     } else if (bytes_read == 0) {
         log_info("Tunnel closed by peer");
         terminate_flag = true;
@@ -90,14 +92,19 @@ void process_data(int socket_fd, Tunnel *tunnel) {
         log_error("Error reading from tunnel");
     }
 
-    // Читаем данные из сокета
+    // Чтение данных из сокета
     bytes_read = receive_data(socket_fd, buffer, sizeof(buffer));
     if (bytes_read > 0) {
-        // Дешифруем данные
         size_t decrypted_len;
-        decrypt_data(buffer, bytes_read, buffer, &decrypted_len);
-        // Записываем дешифрованные данные в туннель
-        write_to_tunnel(tunnel, buffer, decrypted_len);
+        if (!decrypt_data(buffer, bytes_read, buffer, &decrypted_len)) {
+            log_error("Decryption failed");
+            return;
+        }
+
+        if (write_to_tunnel(tunnel, buffer, decrypted_len) < 0) {
+            log_error("Failed to write decrypted data to tunnel");
+            return;
+        }
     } else if (bytes_read == 0) {
         log_info("Connection closed by peer");
         terminate_flag = true;
@@ -246,12 +253,12 @@ int main(int argc, char *argv[]) {
             server_addr.sin_family = AF_INET;
             server_addr.sin_port = htons(server_port);
             inet_pton(AF_INET, server_ip, &server_addr.sin_addr);
-
+    
             char buffer[1024];
             ssize_t bytes_received = receive_udp_data(socket_fd, buffer, sizeof(buffer), &server_addr);
             if (bytes_received > 0) {
                 log_info("Received %zd bytes via UDP", bytes_received);
-                write_to_tunnel(buffer, bytes_received);
+                write_to_tunnel(&tunnel, buffer, bytes_received);
             } else if (bytes_received == 0) {
                 log_info("UDP connection closed by peer");
                 terminate_flag = true;
@@ -259,12 +266,7 @@ int main(int argc, char *argv[]) {
                 log_error("Error receiving UDP data");
             }
         } else {
-            process_data(socket_fd, tun_fd);
-        }
-
-        // Проверка флага завершения
-        if (should_terminate()) {
-            break;
+            process_data(socket_fd, &tunnel);
         }
     }
     #endif
@@ -334,14 +336,14 @@ int main(int argc, char *argv[]) {
 
 
 
-    // Очистка ресурсов
+    
+    // очистка ресурсов перед завершением ВПН
     teardown_tunnel(&tunnel);
     cleanup_encryption();
     close_connection(socket_fd);
-
-    // Завершение работы системы логирования
     close_logging();
-    log_info("VPN core terminated successfully.");
+
+    log_info("VPN core terminated successfully."); // лог
 
     return EXIT_SUCCESS;
 }
