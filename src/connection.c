@@ -15,7 +15,6 @@
 #include <ssl.h>
 #include <unistd.h>
 #include <stdbool.h>
-#include "ssl_lib.c"
 #include <basetsd.h>
 #include <sys/time.h>
 
@@ -32,9 +31,6 @@
 typedef struct {
     SSL_CTX *ssl_ctx;
 } EncryptionContext;
-typedef struct {
-    SSL_CTX *ssl_ctx;
-} EncryptionContext;
 
 typedef struct {
     int socket_fd;
@@ -45,11 +41,14 @@ typedef struct {
 } ConnectionState;
 
 
+
+
 pthread_mutex_t connection_mutex;
 WSADATA wsa_data;
 static SSL_CTX *ssl_ctx = NULL;
 
 
+#ifdef _WIN32
 static void init_winsock(void) {
     int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
     if (result != 0) {
@@ -57,6 +56,7 @@ static void init_winsock(void) {
         exit(EXIT_FAILURE);
     }
 }
+#endif
 
 static bool initialize_ssl_context(void) {
     ssl_ctx = SSL_CTX_new(TLS_client_method());
@@ -96,9 +96,10 @@ bool verify_certificate(SSL *ssl, const char *hostname) {
     // Проверка имени хоста
     if (X509_check_host(cert, hostname, strlen(hostname), 0, NULL) != 1) {
         log_error("Certificate does not match hostname: %s", hostname);
-        X509_free(cert);
+        X509_free(cert);  // Теперь освобождаем память перед возвратом
         return false;
     }
+    
 
     X509_free(cert);
     return true;
@@ -168,7 +169,7 @@ static bool resolve_hostname(const char *hostname, struct sockaddr_in *addr) {
     hints.ai_socktype = SOCK_STREAM;
 
     if (getaddrinfo(hostname, NULL, &hints, &res) != 0) {
-        log_error("Failed to resolve hostname: %s");
+        log_error("Failed to resolve hostname: %s", hostname);
         return false;
     }
 
@@ -184,58 +185,61 @@ static bool resolve_hostname(const char *hostname, struct sockaddr_in *addr) {
 
 // Инициализация соединения
 bool initialize_connection(ConnectionState *state, const char *server_ip, int port) {
-    // Проверка входных параметров
     if (!state || !server_ip || port <= 0 || port > 65535) {
         log_error("Invalid connection state, server IP, or port");
         return false;
     }
 
     pthread_mutex_lock(&connection_mutex);
-
-    // Инициализация Winsock (только для Windows)
     init_winsock();
 
-    // Создание сокета
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
-        log_error("Socket creation failed");
-        cleanup_winsock();
+        log_error("Socket creation failed: %s", strerror(errno));
         pthread_mutex_unlock(&connection_mutex);
         return false;
     }
 
-    // Настройка адреса сервера
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
 
-    // Преобразование IP-адреса из текстового формата в сетевой
     if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        // Если преобразование не удалось, пытаемся разрешить имя хоста
         if (!resolve_hostname(server_ip, &server_addr)) {
             log_error("Failed to resolve hostname: %s", server_ip);
             close(sockfd);
-            cleanup_winsock();
             pthread_mutex_unlock(&connection_mutex);
             return false;
         }
     }
 
-    // Подключение к серверу
+    // Установка таймаутов
+    struct timeval timeout = {5, 0};
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const void*)&timeout, sizeof(timeout)) < 0) {
+        log_warning("Failed to set receive timeout: %s", strerror(errno));
+    }
+
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, (const void*)&timeout, sizeof(timeout)) < 0) {
+        log_warning("Failed to set send timeout: %s", strerror(errno));
+    }
+
+    // Лог перед попыткой соединения
+    log_info("Attempting to connect to %s:%d", server_ip, port);
+
     if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        log_error("Connection to server failed");
+        log_error("Connection to server failed: %s", strerror(errno));
         close(sockfd);
-        cleanup_winsock();
         pthread_mutex_unlock(&connection_mutex);
+#ifdef _WIN32
+        cleanup_winsock();
+#endif
         return false;
     }
 
-    // Сохранение состояния соединения
-    state->socket_fd = sockfd;
-    strncpy(state->server_ip, server_ip, MAX_IP_LENGTH - 1);
-    state->server_ip[MAX_IP_LENGTH - 1] = '\0'; // Гарантированное завершение строки
+    snprintf(state->server_ip, MAX_IP_LENGTH, "%s", server_ip);
     state->port = port;
+    state->socket_fd = sockfd;
     state->is_connected = true;
 
     log_info("Connection established successfully to %s:%d", server_ip, port);
@@ -399,11 +403,14 @@ int establish_https_proxy_tunnel(const char *proxy_ip, int proxy_port, const cha
 bool initialize_ssl(EncryptionContext *ctx) {
     ctx->ssl_ctx = SSL_CTX_new(TLS_client_method());
     if (!ctx->ssl_ctx) {
-        log_error("Failed to create SSL context");
+        log_error("Failed to create SSL context: %s", ERR_error_string(ERR_get_error(), NULL));
         return false;
     }
 
-    // Настройка проверки сертификатов
+    // Запрещаем старые версии TLS
+    SSL_CTX_set_options(ctx->ssl_ctx, SSL_OP_NO_TLSv1 | SSL_OP_NO_TLSv1_1);
+
+    // Проверка сертификатов
     SSL_CTX_set_verify(ctx->ssl_ctx, SSL_VERIFY_PEER, NULL);
     if (!SSL_CTX_load_verify_locations(ctx->ssl_ctx, "ca-certificates.crt", NULL)) {
         log_error("Failed to load CA certificates");
@@ -411,11 +418,9 @@ bool initialize_ssl(EncryptionContext *ctx) {
         return false;
     }
 
-    // Установка глубины проверки цепочки сертификатов
-    SSL_CTX_set_verify_depth(ctx->ssl_ctx, 4);
-
     return true;
 }
+
 
 int establish_connection(const char *server_ip, int port) {
     int sockfd;
@@ -623,6 +628,9 @@ bool reconnect(ConnectionState *state) {
         return false;
     }
     bool success = initialize_connection(state, state->server_ip, state->port);
+    if (success) {
+        state->is_connected = true;
+    }
     pthread_mutex_unlock(&connection_mutex);
 
     return success;
