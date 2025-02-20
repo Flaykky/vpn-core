@@ -10,7 +10,7 @@ A minimal VPN-like client implementation for educational purposes.
 
 ## Build
 
-### Requirements
+#### Requirements
 - CMake 3.10+
 - C compiler (GCC, Clang, MSVC)
 - OpenSSL
