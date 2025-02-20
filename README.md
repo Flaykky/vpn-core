@@ -18,7 +18,7 @@ A minimal VPN-like client implementation for educational purposes.
 - getopt.h (for windows)
 
 
-## basic TCP tunneling
+## Basic TCP tunneling
 ```bash
 ./vpnCore --server 192.168.1.100 --port 8080
 ```
