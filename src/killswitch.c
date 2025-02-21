@@ -1,5 +1,7 @@
 #include "killswitch.h"
-#include <stdbool.h>
+#include "logging.h"
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef _WIN32
 #include <windows.h>
