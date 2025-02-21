@@ -21,6 +21,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <windows.h>
+#include <fwpmu.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
 #include <sys/socket.h>
@@ -39,9 +40,6 @@ typedef struct {
     bool is_connected;
     SSL_CTX *ssl_ctx; // Добавляем поле для SSL контекста
 } ConnectionState;
-
-
-
 
 pthread_mutex_t connection_mutex;
 WSADATA wsa_data;
@@ -77,6 +75,14 @@ static bool initialize_ssl_context(void) {
 
     return true;
 }
+
+
+// переподключение если сервер недоступен 
+
+void handle_connection_loss(ConnectionState *state) {
+
+}
+
 
 
 static void cleanup_winsock(void) {
