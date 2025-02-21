@@ -6,10 +6,7 @@
 #include <openssl/types.h>
 #include <openssl/ec.h>
 
-static pthread_mutex_t encryption_mutex = PTHREAD_MUTEX_INITIALIZER;
-static EVP_CIPHER_CTX *ctx = NULL;
-static unsigned char key[32];
-static unsigned char iv[16];
+
 
 
 typedef struct {
@@ -20,12 +17,7 @@ typedef struct {
 static PFSContext pfs_ctx;
 
 
-typedef struct {
-    unsigned char key[32];
-    unsigned char iv[16];
-} EncryptionContext;
 
-static EncryptionContext enc_ctx;
 
 
 void secure_clear_memory(void *ptr, size_t size) {
