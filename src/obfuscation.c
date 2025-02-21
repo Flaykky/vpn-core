@@ -22,6 +22,88 @@ typedef struct {
 
 static ObfuscationState obfuscation_state = {false};
 
+
+
+void add_dummy_traffic(int sock) {
+    char buffer[MAX_NOISE_SIZE];
+    while (true) {
+        memset(buffer, rand() % 256, MAX_NOISE_SIZE);
+        send(sock, buffer, MAX_NOISE_SIZE, 0);
+        usleep(rand() % 50000); // Имитация случайных задержек
+    }
+}
+
+// Обфускация через Meek
+bool meek_initialize(void) {
+    log_info("Initializing Meek protocol...");
+    // Настройка Meek (например, HTTPS-запросы к легитимным серверам)
+    return true;
+}
+
+void meek_cleanup(void) {
+    log_info("Cleaning up Meek protocol...");
+}
+
+ssize_t meek_send_data(int sock, const void *data, size_t length) {
+    // Имитация отправки данных через HTTPS
+    return send(sock, data, length, 0);
+}
+
+ssize_t meek_receive_data(int sock, void *buffer, size_t length) {
+    // Имитация получения данных через HTTPS
+    return recv(sock, buffer, length, 0);
+}
+
+Protocol meek_protocol = {
+    .name = "Meek",
+    .initialize = meek_initialize,
+    .cleanup = meek_cleanup,
+    .send_data = meek_send_data,
+    .receive_data = meek_receive_data
+};
+
+// Аналогично можно реализовать Obfs4, Shadowsocks и другие протоколы
+
+
+bool switch_protocol(const char *protocol_name) {
+    if (strcmp(protocol_name, "Meek") == 0) {
+        current_protocol = meek_protocol;
+    } else if (strcmp(protocol_name, "Obfs4") == 0) {
+        // current_protocol = obfs4_protocol;
+    } else if (strcmp(protocol_name, "Shadowsocks") == 0) {
+        // current_protocol = shadowsocks_protocol;
+    } else {
+        log_error("Unknown protocol: %s", protocol_name);
+        return false;
+    }
+
+    log_info("Switched to protocol: %s", protocol_name);
+    return true;
+}
+
+void handle_block_detection(ConnectionState *state) {
+    pthread_mutex_lock(&connection_mutex);
+
+    if (!is_socket_valid(state)) {
+        log_warning("Connection blocked, switching protocol...");
+        static const char *protocols[] = {"Meek", "Obfs4", "Shadowsocks"};
+        static int current_index = 0;
+
+        // Попробуем следующий протокол
+        current_index = (current_index + 1) % (sizeof(protocols) / sizeof(protocols[0]));
+        if (!switch_protocol(protocols[current_index])) {
+            log_error("Failed to switch protocol");
+            pthread_mutex_unlock(&connection_mutex);
+            return;
+        }
+
+        // Переподключение
+        reconnect(state);
+    }
+
+    pthread_mutex_unlock(&connection_mutex);
+}
+
 // Функция для инициализации обфускации
 bool initialize_obfuscation(void) {
     if (obfuscation_state.is_initialized) {
