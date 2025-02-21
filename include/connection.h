@@ -18,13 +18,23 @@ typedef SSIZE_T ssize_t;
 #include <arpa/inet.h>
 #endif
 
-// Тип для описания состояния соединения
+
+typedef struct {
+    SSL_CTX *ssl_ctx;
+} EncryptionContext;
+
 typedef struct {
     int socket_fd;
-    bool is_connected;
     char server_ip[MAX_IP_LENGTH];
     int port;
+    bool is_connected;
+    SSL_CTX *ssl_ctx; // Добавляем поле для SSL контекста
 } ConnectionState;
+
+pthread_mutex_t connection_mutex;
+WSADATA wsa_data;
+static SSL_CTX *ssl_ctx = NULL;
+
 
 // Инициализация соединения
 bool initialize_connection(ConnectionState *state, const char *server_ip, int port);
