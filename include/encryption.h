@@ -4,13 +4,20 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <pthread.h>
 
 // Структура для хранения контекста шифрования
 typedef struct {
-    uint8_t key[32]; // 256-битный ключ для AES-256
-    uint8_t iv[16];  // 128-битный вектор инициализации (IV) для AES
+    unsigned char key[32];
+    unsigned char iv[16];
 } EncryptionContext;
 
+static EncryptionContext enc_ctx;
+
+static pthread_mutex_t encryption_mutex = PTHREAD_MUTEX_INITIALIZER;
+static EVP_CIPHER_CTX *ctx = NULL;
+static unsigned char key[32];
+static unsigned char iv[16];
 
 // ======== обьявление функций ======== 
 
