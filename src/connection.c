@@ -29,21 +29,6 @@
 #include <arpa/inet.h>
 #endif
 
-typedef struct {
-    SSL_CTX *ssl_ctx;
-} EncryptionContext;
-
-typedef struct {
-    int socket_fd;
-    char server_ip[MAX_IP_LENGTH];
-    int port;
-    bool is_connected;
-    SSL_CTX *ssl_ctx; // Добавляем поле для SSL контекста
-} ConnectionState;
-
-pthread_mutex_t connection_mutex;
-WSADATA wsa_data;
-static SSL_CTX *ssl_ctx = NULL;
 
 
 #ifdef _WIN32
