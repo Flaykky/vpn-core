@@ -4,10 +4,8 @@
 #include "logging.h"
 #include <stdlib.h>
 #include <string.h>
-#include <zlib.h> // Для сжатия данных
-#include <openssl/rand.h> // Для генерации случайных чисел
-
-
+#include <zlib.h> 
+#include <openssl/rand.h>
 
 // Максимальный размер случайного шума
 #define MAX_NOISE_SIZE 64
