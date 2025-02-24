@@ -14,6 +14,13 @@ typedef struct {
 
 static EncryptionContext enc_ctx;
 
+typedef struct {
+    EC_KEY *ecdh_key; // Эфемерный ключ для ECDH
+    unsigned char shared_secret[32]; // Общий секретный ключ
+} PFSContext;
+
+static PFSContext pfs_ctx;
+
 static pthread_mutex_t encryption_mutex = PTHREAD_MUTEX_INITIALIZER;
 static EVP_CIPHER_CTX *ctx = NULL;
 static unsigned char key[32];
