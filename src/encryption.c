@@ -6,20 +6,6 @@
 #include <openssl/types.h>
 #include <openssl/ec.h>
 
-
-
-
-typedef struct {
-    EC_KEY *ecdh_key; // Эфемерный ключ для ECDH
-    unsigned char shared_secret[32]; // Общий секретный ключ
-} PFSContext;
-
-static PFSContext pfs_ctx;
-
-
-
-
-
 void secure_clear_memory(void *ptr, size_t size) {
     if (ptr) {
         volatile unsigned char *p = (volatile unsigned char *)ptr;
