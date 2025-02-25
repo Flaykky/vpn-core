@@ -4,6 +4,32 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+
+typedef struct {
+    const char *name;
+    bool (*initialize)(void);
+    void (*cleanup)(void);
+    ssize_t (*send_data)(int sock, const void *data, size_t length);
+    ssize_t (*receive_data)(int sock, void *buffer, size_t length);
+} Protocol;
+
+static Protocol current_protocol;
+
+
+// Максимальный размер случайного шума
+#define MAX_NOISE_SIZE 64
+#define MAX_OBFUSCATION_BUFFER 4096
+
+// Структура для хранения состояния обфускации
+typedef struct {
+    bool is_initialized;
+    EVP_CIPHER_CTX *encryption_ctx;
+    unsigned char key[32]; // Ключ AES-256
+    unsigned char iv[16];  // IV для AES
+} ObfuscationState;
+
+static ObfuscationState obfuscation_state = {false};
+
 // Включение/выключение обфускации
 void enable_obfuscation(bool enable);
 
