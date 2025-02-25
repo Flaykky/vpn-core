@@ -633,19 +633,6 @@ ssize_t receive_udp_data(int socket_fd, void *buffer, size_t length, struct sock
 
 
 
-// Проверка состояния соединения
-#define MAX_PROXIES 10
-
-typedef struct {
-    char ip[16];
-    int port;
-    bool is_available;
-} Proxy;
-
-
-
-static Proxy proxies[MAX_PROXIES];
-static int proxy_count = 0;
 
 void add_proxy(const char *ip, int port) {
     if (proxy_count < MAX_PROXIES) {
