@@ -5,6 +5,8 @@
 #include "config.h"
 #include "logging.h"
 #include "utils.h"
+#include "killswitch.h"
+#include "obfuscation.h"
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -13,11 +15,33 @@
 #include <basetsd.h>
 #include <getopt.h>
 
+
 #ifdef _WIN32
 #include <windows.h>
 #pragma comment(lib, "wintun.lib")
 #else
 #endif
+
+void process_data(int socket_fd, Tunnel *tunnel) {
+    char buffer[1024];
+    ssize_t bytes_read;
+
+    // Чтение данных из туннеля
+    bytes_read = read_from_tunnel(tunnel, buffer, sizeof(buffer));
+    if (bytes_read > 0) {
+        // Обфускация и шифрование
+        unsigned char obfuscated_data[2048];
+        ssize_t obfuscated_len = obfuscate_udp_over_tcp(buffer, bytes_read, obfuscated_data, sizeof(obfuscated_data));
+        if (obfuscated_len < 0) {
+            log_error("Obfuscation failed");
+            return;
+        }
+
+        // Отправка обфусцированных данных
+        send_data(socket_fd, obfuscated_data, obfuscated_len);
+    }
+
+ }
 
 bool read_config_file(const char *filename, Config *config) {
     FILE *file = fopen(filename, "r");
@@ -126,7 +150,7 @@ int main(int argc, char *argv[]) {
         {"proxy-port", required_argument, 0, 'y'},
         {0, 0, 0, 0}
     };
-
+    
     const char *mode = "tcp";
     const char *server_ip = "127.0.0.1";
     int server_port = 8080;
@@ -135,7 +159,7 @@ int main(int argc, char *argv[]) {
 
     int opt;
 
-    
+
 
     log_info("VPN Core started with arguments:");
         for (int i = 0; i < argc; i++) {
@@ -171,13 +195,6 @@ int main(int argc, char *argv[]) {
     // Обработка параметров командной строки
 
 
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "-s") == 0 && i + 1 < argc) {
-            server_ip = argv[++i];
-        } else if (strcmp(argv[i], "-p") == 0 && i + 1 < argc) {
-            server_port = atoi(argv[++i]);
-        }
-    }
 
     
 
@@ -207,12 +224,51 @@ int main(int argc, char *argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Настройка туннеля
-    int tun_fd = -1; // Добавляем переменную для файлового дескриптора туннеля
-    if (!setup_tunnel(socket_fd)) {
+    Tunnel tunnel;
+    if (!setup_tunnel(&tunnel, socket_fd)) {
         log_error("Failed to set up tunnel.");
+        return EXIT_FAILURE;
+    }
+
+
+    if (!initialize_pfs()) {
+        log_error("Failed to initialize PFS");
+        return EXIT_FAILURE;
+    }
+
+    // Получение открытого ключа
+    unsigned char public_key[65];
+    size_t public_key_len = get_public_key(public_key, sizeof(public_key));
+    if (public_key_len == 0) {
+        log_error("Failed to get public key");
+        cleanup_pfs();
+        return EXIT_FAILURE;
+    }
+
+    // Здесь должен быть код для обмена ключами с сервером
+    // Например, отправка public_key и получение peer_public_key
+
+    // Вычисление общего секрета
+    unsigned char peer_public_key[65] = {0}; // Заполните реальными данными
+    size_t peer_public_key_len = 65; // Пример
+    if (!compute_shared_secret(peer_public_key, peer_public_key_len)) {
+        log_error("Failed to compute shared secret");
+        cleanup_pfs();
+        return EXIT_FAILURE;
+    }
+
+    // Инициализация шифрования с PFS
+    if (!initialize_encryption_with_pfs()) {
+        log_error("Failed to initialize encryption with PFS");
+        cleanup_pfs();
+        return EXIT_FAILURE;
+    }
+
+    // Инициализация обфускации
+    if (!initialize_obfuscation()) {
+        log_error("Failed to initialize obfuscation");
         cleanup_encryption();
-        close_connection(socket_fd);
+        cleanup_pfs();
         return EXIT_FAILURE;
     }
 
@@ -239,7 +295,7 @@ int main(int argc, char *argv[]) {
 
     #ifdef _WIN32
     while (!terminate_flag) {
-        process_data_windows(socket_fd);
+        process_data(socket_fd, &tunnel); // Передаём tunnel
         // Проверка флага завершения
         if (should_terminate()) {
             break;
@@ -268,12 +324,30 @@ int main(int argc, char *argv[]) {
         } else {
             process_data(socket_fd, &tunnel);
         }
+    
+        // Проверка флага завершения
+        if (should_terminate()) {
+            break;
+        }
     }
     #endif
 
 
 
+    // Проверка доступности сервера
+    if (!is_server_reachable(server_ip, server_port)) {
+        log_error("Server is unreachable");
+        return EXIT_FAILURE;
+    }
 
+    bool use_udp = false; // Флаг для использования UDP
+
+    // Установка соединения
+    if (use_udp) {
+        socket_fd = establish_udp_connection(server_ip, server_port);
+    } else {
+        socket_fd = establish_connection(server_ip, server_port);
+    }
 
 
     bool use_udp = false; // Флаг для использования UDP
@@ -335,11 +409,53 @@ int main(int argc, char *argv[]) {
     }
 
 
+    if (!initialize_obfuscation()) {
+        log_error("Failed to initialize obfuscation");
+        return EXIT_FAILURE;
+    }
+    
+    // Обфускация данных
+    unsigned char udp_data[] = "Hello, this is a test message!";
+    unsigned char tcp_buffer[1024];
+    ssize_t tcp_len = obfuscate_udp_over_tcp(udp_data, sizeof(udp_data), tcp_buffer, sizeof(tcp_buffer));
+    if (tcp_len < 0) {
+        log_error("Failed to obfuscate data");
+        cleanup_obfuscation();
+        return EXIT_FAILURE;
+    }
+    
+    // Отправка данных через TCP
+    send_data(socket_fd, tcp_buffer, tcp_len);
+    
+    // Получение данных через TCP
+    unsigned char received_data[1024];
+    ssize_t received_len = receive_data(socket_fd, received_data, sizeof(received_data));
+    if (received_len < 0) {
+        log_error("Failed to receive data");
+        cleanup_obfuscation();
+        return EXIT_FAILURE;
+    }
+    
+    // Деобфускация данных
+    unsigned char udp_buffer[1024];
+    ssize_t udp_len = deobfuscate_udp_over_tcp(received_data, received_len, udp_buffer, sizeof(udp_buffer));
+    if (udp_len < 0) {
+        log_error("Failed to deobfuscate data");
+        cleanup_obfuscation();
+        return EXIT_FAILURE;
+    }
+    
+    log_info("Deobfuscated data: %s", udp_buffer);
+    
+    
+
 
     
     // очистка ресурсов перед завершением ВПН
     teardown_tunnel(&tunnel);
     cleanup_encryption();
+    cleanup_obfuscation();
+    cleanup_pfs();
     close_connection(socket_fd);
     close_logging();
 
