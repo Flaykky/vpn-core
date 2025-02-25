@@ -31,6 +31,20 @@ typedef struct {
     SSL_CTX *ssl_ctx; // Добавляем поле для SSL контекста
 } ConnectionState;
 
+// Проверка состояния соединения
+#define MAX_PROXIES 10
+
+typedef struct {
+    char ip[16];
+    int port;
+    bool is_available;
+} Proxy;
+
+
+
+static Proxy proxies[MAX_PROXIES];
+static int proxy_count = 0;
+
 pthread_mutex_t connection_mutex;
 WSADATA wsa_data;
 static SSL_CTX *ssl_ctx = NULL;
