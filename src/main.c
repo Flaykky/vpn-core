@@ -15,7 +15,6 @@
 #include <basetsd.h>
 #include <getopt.h>
 
-
 #ifdef _WIN32
 #include <windows.h>
 #pragma comment(lib, "wintun.lib")
@@ -362,7 +361,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-
+    char random_ip[16];
+    generate_random_ip(random_ip, sizeof(random_ip));
+    setup_tunnel(socket_fd, random_ip, "255.255.255.0");
 
     // Установка соединения
     int socket_fd = -1;
@@ -382,6 +383,8 @@ int main(int argc, char *argv[]) {
         log_error("Failed to initialize PFS");
         return EXIT_FAILURE;
     }
+
+    
 
     unsigned char public_key[65];
     size_t public_key_len = get_public_key(public_key, sizeof(public_key));
