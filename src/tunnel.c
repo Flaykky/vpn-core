@@ -4,19 +4,19 @@
 #include <string.h>
 #include <errno.h>
 #include <basetsd.h>
+#include <openssl/rand.h>
+#include <fcntl.h>
 
-// Определение ssize_t для Windows
+
 #ifdef _WIN32
-typedef SSIZE_T ssize_t;
-
 #pragma comment(lib, "wintun.lib")
 #else
+#include <sys/ioctl.h>
 #endif
 
 #include <sys/types.h>
 
 
-static int tun_fd = -1;
 
 #ifdef _WIN32
 // Windows-specific code for creating a virtual network interface using Wintun
@@ -24,12 +24,16 @@ static HANDLE wintun_handle = NULL;
 
 bool setup_tunnel(int socket_fd, const char *ip_address, const char *subnet_mask) {
     if (!WintunIsAvailable()) {
+
+        
         log_error("Wintun is not available on this system");
         return false;
     }
 
-
-    
+    if (!is_valid_ip(ip_address) || !is_valid_subnet_mask(subnet_mask)) {
+        log_error("Invalid IP or subnet mask");
+        return false;
+    }
 
     // Create a new adapter
     const char *adapter_name = "VPN-Tunnel";
@@ -49,6 +53,13 @@ bool setup_tunnel(int socket_fd, const char *ip_address, const char *subnet_mask
     addr.sin_family = AF_INET;
     inet_pton(AF_INET, subnet_mask, &addr.sin_addr); // Используем переданную маску
     ifr.ifr_netmask = *(struct sockaddr *)&addr;
+
+    struct timeval timeout = {5, 0}; // 5 секунд
+    if (ioctl(tun_fd, SIOCSIFADDR, &ifr) < 0) {
+        log_error("ioctl(SIOCSIFADDR) failed: %s", strerror(errno));
+        return false;
+    }
+
 #endif
 
     if (!wintun_handle) {
@@ -83,7 +94,11 @@ void teardown_tunnel(void) {
 // Unix-specific code for creating a TUN/TAP interface
 bool setup_tunnel(int socket_fd) {
     struct ifreq ifr;
+    
     char tun_name[IFNAMSIZ] = "tun0";
+    snprintf(ifr.ifr_name, IFNAMSIZ, "%s", tun_name); // Безопасное копирование
+
+
 
     // Open /dev/net/tun
     tun_fd = open("/dev/net/tun", O_RDWR);
@@ -91,6 +106,8 @@ bool setup_tunnel(int socket_fd) {
         perror("Opening /dev/net/tun failed");
         return false;
     }
+
+
 
     // Configure TUN device
     memset(&ifr, 0, sizeof(ifr));
@@ -114,13 +131,10 @@ bool setup_tunnel(int socket_fd) {
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    inet_pton(AF_INET, "192.168.77.2", &addr.sin_addr); // Example IP address
-    addr.sin_port = 0;
-
-    ifr.ifr_addr = *(struct sockaddr *)&addr;
-    if (ioctl(sockfd, SIOCSIFADDR, &ifr) < 0) {
-        perror("ioctl(SIOCSIFADDR) failed");
-        close(sockfd);
+    
+    // Используем переданный IP
+    if (inet_pton(AF_INET, ip_address, &addr.sin_addr) <= 0) {
+        log_error("Invalid IP address: %s", ip_address);
         close(tun_fd);
         return false;
     }
@@ -163,7 +177,7 @@ void teardown_tunnel(void) {
 // Чтение данных из туннеля
 ssize_t read_from_tunnel(void *buffer, size_t length) {
     if (tun_fd < 0) {
-        log_error("Invalid tunnel file descriptor");
+        log_error("Tunnel file descriptor is invalid");
         return -1;
     }
     ssize_t bytes_read = read(tun_fd, buffer, length);
@@ -202,3 +216,24 @@ ssize_t write_to_tunnel(const void *buffer, size_t length) {
 
     return bytes_written;
 }
+
+bool generate_random_ip(char *ip_buffer, size_t ip_size) {
+    unsigned char ip[4];
+    if (!RAND_bytes(ip, sizeof(ip))) {
+        log_error("Failed to generate random IP");
+        return false;
+    }
+    snprintf(ip_buffer, ip_size, "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+    return true;
+}
+
+bool is_valid_ip(const char *ip) {
+    struct sockaddr_in sa;
+    return inet_pton(AF_INET, ip, &sa.sin_addr) != 0;
+}
+
+bool is_valid_subnet_mask(const char *mask) {
+    struct sockaddr_in sa;
+    return inet_pton(AF_INET, mask, &sa.sin_addr) != 0;
+}
+
