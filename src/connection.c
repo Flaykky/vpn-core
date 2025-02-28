@@ -17,6 +17,7 @@
 #include <stdbool.h>
 #include <basetsd.h>
 #include <sys/time.h>
+#include "obfuscation.h"
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -84,7 +85,7 @@ void handle_connection_loss(ConnectionState *state) {
 
 
 bool set_socket_timeouts(int socket_fd, int send_timeout_sec, int recv_timeout_sec) {
-    if (!is_socket_valid(socket_fd)) {
+    if (!_validis_socket(socket_fd)) {
         log_error("Invalid socket descriptor");
         return false;
     }
@@ -629,7 +630,18 @@ ssize_t receive_udp_data(int socket_fd, void *buffer, size_t length, struct sock
 }
 
 
+bool is_socket_valid(ConnectionState *state) {
+    if (!state) {
+        log_error("Invalid connection state");
+        return false;
+    }
 
+    pthread_mutex_lock(&connection_mutex);
+    bool valid = IS_SOCKET_VALID(state->socket_fd) && state->is_connected;
+    pthread_mutex_unlock(&connection_mutex);
+    
+    return valid;
+}
 
 
 
@@ -698,3 +710,203 @@ bool reconnect(ConnectionState *state) {
     pthread_mutex_unlock(&connection_mutex);
     return success;
 }
+
+static pthread_mutex_t shadowsocks_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Вспомогательная функция для очистки памяти
+static void secure_clear_memory(void *ptr, size_t size) {
+    if (ptr) {
+        volatile uint8_t *p = (volatile uint8_t *)ptr;
+        while (size--) {
+            *p++ = 0;
+        }
+    }
+}
+
+// Инициализация Shadowsocks-соединения
+bool initialize_shadowsocks(ShadowsocksState *state, const char *server_ip, int port, const char *password, const char *method) {
+    pthread_mutex_lock(&shadowsocks_mutex);
+
+    if (!state || !server_ip || !password || !method) {
+        log_error("Invalid arguments for Shadowsocks initialization");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return false;
+    }
+
+    // Очистка предыдущего состояния
+    memset(state, 0, sizeof(ShadowsocksState));
+
+    // Копирование параметров
+    strncpy(state->server_ip, server_ip, sizeof(state->server_ip) - 1);
+    state->server_port = port;
+    strncpy(state->password, password, sizeof(state->password) - 1);
+    strncpy(state->method, method, sizeof(state->method) - 1);
+
+    // Создание сокета
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        log_error("Socket creation failed");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return false;
+    }
+
+    // Настройка адреса сервера
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
+        log_error("Invalid server IP address: %s", server_ip);
+        close(sockfd);
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return false;
+    }
+
+    // Подключение к серверу
+    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        log_error("Failed to connect to Shadowsocks server");
+        close(sockfd);
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return false;
+    }
+
+    // Инициализация шифрования
+    if (!initialize_encryption_with_password(method, password)) {
+        log_error("Failed to initialize encryption for Shadowsocks");
+        close(sockfd);
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return false;
+    }
+
+    // Сохранение состояния
+    state->socket_fd = sockfd;
+    state->is_connected = true;
+
+    log_info("Shadowsocks connection established successfully to %s:%d", server_ip, port);
+    pthread_mutex_unlock(&shadowsocks_mutex);
+    return true;
+}
+
+// Закрытие Shadowsocks-соединения
+void close_shadowsocks(ShadowsocksState *state) {
+    pthread_mutex_lock(&shadowsocks_mutex);
+
+    if (!state) {
+        log_warning("Invalid Shadowsocks state");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return;
+    }
+
+    if (state->socket_fd >= 0) {
+#ifdef _WIN32
+        closesocket(state->socket_fd);
+#else
+        close(state->socket_fd);
+#endif
+        log_info("Shadowsocks socket closed successfully");
+        state->socket_fd = -1;
+    }
+
+    // Очистка пароля из памяти
+    secure_clear_memory(state->password, sizeof(state->password));
+
+    // Сброс состояния
+    state->is_connected = false;
+    memset(state->server_ip, 0, sizeof(state->server_ip));
+    state->server_port = 0;
+
+    pthread_mutex_unlock(&shadowsocks_mutex);
+}
+
+// Отправка данных через Shadowsocks
+ssize_t send_data_shadowsocks(ShadowsocksState *state, const void *data, size_t length) {
+    pthread_mutex_lock(&shadowsocks_mutex);
+
+    if (!state || !state->is_connected || state->socket_fd < 0) {
+        log_error("Invalid Shadowsocks state or socket");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return -1;
+    }
+
+    // Шифрование данных
+    size_t encrypted_len;
+    unsigned char encrypted_buffer[4096];
+    if (!encrypt_data(data, length, encrypted_buffer, &encrypted_len)) {
+        log_error("Encryption failed for Shadowsocks data");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return -1;
+    }
+
+    // Отправка зашифрованных данных
+    ssize_t bytes_sent = send(state->socket_fd, encrypted_buffer, encrypted_len, 0);
+    if (bytes_sent < 0) {
+        log_error("Failed to send Shadowsocks data");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return -1;
+    }
+
+    pthread_mutex_unlock(&shadowsocks_mutex);
+    return bytes_sent;
+}
+
+// Получение данных через Shadowsocks
+ssize_t receive_data_shadowsocks(ShadowsocksState *state, void *buffer, size_t length) {
+    pthread_mutex_lock(&shadowsocks_mutex);
+
+    if (!state || !state->is_connected || state->socket_fd < 0) {
+        log_error("Invalid Shadowsocks state or socket");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return -1;
+    }
+
+    // Получение зашифрованных данных
+    ssize_t bytes_received = recv(state->socket_fd, buffer, length, 0);
+    if (bytes_received < 0) {
+        log_error("Failed to receive Shadowsocks data");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return -1;
+    } else if (bytes_received == 0) {
+        log_info("Shadowsocks connection closed by peer");
+        state->is_connected = false;
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return 0;
+    }
+
+    // Дешифрование данных
+    size_t decrypted_len;
+    if (!decrypt_data(buffer, bytes_received, buffer, &decrypted_len)) {
+        log_error("Decryption failed for Shadowsocks data");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return -1;
+    }
+
+    pthread_mutex_unlock(&shadowsocks_mutex);
+    return decrypted_len;
+}
+
+// Переподключение при разрыве
+bool reconnect_shadowsocks(ShadowsocksState *state) {
+    pthread_mutex_lock(&shadowsocks_mutex);
+
+    if (!state || !state->is_connected) {
+        log_warning("Already disconnected, no need to reconnect");
+        pthread_mutex_unlock(&shadowsocks_mutex);
+        return false;
+    }
+
+    log_info("Attempting to reconnect to Shadowsocks server at %s:%d", state->server_ip, state->server_port);
+
+    // Закрытие текущего соединения
+    close_shadowsocks(state);
+
+    // Повторная инициализация
+    bool success = initialize_shadowsocks(state, state->server_ip, state->server_port, state->password, state->method);
+    if (success) {
+        state->is_connected = true;
+    }
+
+    pthread_mutex_unlock(&shadowsocks_mutex);
+    return success;
+}
+
