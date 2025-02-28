@@ -4,15 +4,14 @@
 #include <string.h>
 #include <time.h>
 #include <config.h>
-
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #ifdef _WIN32
 #include <windows.h>
 #else
-#include <unistd.h>
 #endif
 
 
