@@ -7,7 +7,9 @@ A minimal VPN-like client implementation for educational purposes.
 - Connect with HTTPS proxies
 - Cross-platform support (Windows/Linux)
 - Basic UDP tunneling
+- Shadowsocks protocol support
 - PFS support
+- WireGuard connection (comming soon)
 
 
 ## Requirements
@@ -16,6 +18,7 @@ A minimal VPN-like client implementation for educational purposes.
 - OpenSSL
 - pthreads (for windows)
 - getopt.h (for windows)
+
 
 
 ## Basic TCP tunneling
