@@ -15,11 +15,60 @@
 #include <basetsd.h>
 #include <getopt.h>
 
+
 #ifdef _WIN32
 #include <windows.h>
 #pragma comment(lib, "wintun.lib")
 #else
 #endif
+
+
+#include "connection.h"
+#include "config.h"
+#include <pthread.h>
+#include <unistd.h>
+
+static void *monitor_thread(void *arg) {
+    // Создаем временное состояние соединения
+    ConnectionState temp_state = {0};
+    temp_state.socket_fd = -1; // Инициализируем недействительным дескриптором
+    strncpy(temp_state.server_ip, global_config.server_ip, MAX_IP_LENGTH);
+    temp_state.port = global_config.server_port;
+
+    while (!terminate_flag) {
+        // Проверка состояния соединения
+        bool connected = is_socket_valid(&temp_state);
+
+        // Определение геолокации (если ещё не определено)
+        if (!global_config.country || !global_config.city) {
+            determine_server_location();
+        }
+
+        // Вывод статуса
+        printf(
+            "╭──────────────────────────────────────────────╮\n"
+            "│  VPN Connection Status: %s [%s]        │\n"
+            "│                                              │\n"
+            "│  Location: %s, %s               │\n"
+            "│  Protocol: %s                          │\n"
+            "│                                              │\n"
+            "│  Inbound:  %s:%d (UDP)                 │\n"
+            "│  Outbound: %s                          │\n"
+            "╰──────────────────────────────────────────────╯\n",
+            connected ? "Connected" : "Disconnected",
+            connected ? "✓" : "✗",
+            global_config.country,
+            global_config.city,
+            global_config.protocol,
+            global_config.server_ip,
+            global_config.server_port,
+            "1.1.1.2" // Пример outbound IP
+        );
+
+        sleep(5); // Обновление каждые 5 секунд
+    }
+    return NULL;
+}
 
 void process_data(int socket_fd, Tunnel *tunnel) {
     char buffer[1024];
@@ -59,7 +108,7 @@ bool read_config_file(const char *filename, Config *config) {
                 free(config->server_ip); // Освобождаем предыдущее значение
                 config->server_ip = strdup(value);
             } else if (strcmp(key, "port") == 0) {
-                config->port = atoi(value);
+                config->server_port = atoi(value);
             }
         }
     }
@@ -194,8 +243,25 @@ int main(int argc, char *argv[]) {
     // Обработка параметров командной строки
 
 
+    Config global_config = {0}; // Глобальная структура для хранения конфигурации
 
+    if (!read_config_file("config.json", &global_config)) {
+        log_error("Failed to read config");
+        return EXIT_FAILURE;
+    }
+        // Запуск мониторинга в отдельном потоке
+        pthread_t monitor_tid;
+        pthread_create(&monitor_tid, NULL, monitor_thread, NULL);
+        pthread_detach(monitor_tid);
     
+        // Инициализация соединения в зависимости от протокола
+        if (strcmp(global_config.protocol, "wireguard") == 0) {
+            // Инициализация WireGuard (добавьте ваш код)
+            log_info("WireGuard initialized");
+        } else {
+            log_error("Unsupported protocol: %s", global_config.protocol);
+            return EXIT_FAILURE;
+        }
 
     log_info("Starting VPN core...");
 
