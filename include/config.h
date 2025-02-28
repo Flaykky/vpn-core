@@ -1,24 +1,23 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include "common.h"
 #include <stdbool.h>
 
+
 typedef struct {
+    char *protocol;
     char *server_ip;
-    int port;
-    bool use_udp; // Флаг для использования UDP
-    int mtu;      // Размер MTU
-    char *cert_path; // Путь к сертификатам
+    int server_port;
+    char *login;
+    char *password;
+    char *country; 
+    char *city;
+    bool use_udp; 
 } Config;
 
-// Функция для инициализации конфигурации
-bool initialize_config(int argc, char *argv[]);
+extern Config global_config;
 
-// Функция для получения серверного IP-адреса
-const char* get_server_ip(void);
-
-// Функция для получения порта сервера
-int get_port(void);
+bool parse_json_config(const char *filename, Config *config);
+void free_config(Config *config);
 
 #endif // CONFIG_H
