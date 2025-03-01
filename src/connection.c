@@ -18,10 +18,14 @@
 #include <basetsd.h>
 #include <sys/time.h>
 #include "obfuscation.h"
-
+#include "wireguard-nt-master/api/adapter.h"
+#include "wireguard-nt-master/api/wireguard.h"
 #ifdef _WIN32
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
+#include <bcrypt.h>
+#include <winsock.h>
 #include <fwpmu.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
@@ -910,3 +914,181 @@ bool reconnect_shadowsocks(ShadowsocksState *state) {
     return success;
 }
 
+
+// Функция для преобразования IP-адреса и порта в SOCKADDR_INET
+static bool set_endpoint(SOCKADDR_INET *endpoint, const char *ip, uint16_t port) {
+    memset(endpoint, 0, sizeof(*endpoint));
+
+    // Преобразование IP-адреса
+    if (inet_pton(AF_INET, ip, &endpoint->Ipv4.sin_addr) == 1) {
+        endpoint->Ipv4.sin_family = AF_INET;
+        endpoint->Ipv4.sin_port = htons(port);
+        return true;
+    } else if (inet_pton(AF_INET6, ip, &endpoint->Ipv6.sin6_addr) == 1) {
+        endpoint->Ipv6.sin6_family = AF_INET6;
+        endpoint->Ipv6.sin6_port = htons(port);
+        return true;
+    }
+
+    return false; // Неверный формат IP-адреса
+}
+
+/*   wireGuard protocol logic  */ 
+
+
+
+static pthread_mutex_t wireguard_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// Функция для очистки памяти
+static void secure_clear_memory(void *ptr, size_t size) {
+    if (ptr) {
+        volatile unsigned char *p = (volatile unsigned char *)ptr;
+        while (size--) {
+            *p++ = 0;
+        }
+    }
+}
+
+// Генерация ключей WireGuard
+bool generate_wireguard_keys(char *private_key, char *public_key) {
+    pthread_mutex_lock(&wireguard_mutex);
+
+    uint8_t raw_private_key[32];
+    uint8_t raw_public_key[32];
+
+    // Генерация случайного приватного ключа
+    if (!RAND_bytes(raw_private_key, sizeof(raw_private_key))) {
+        log_error("Failed to generate WireGuard private key");
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    // Вычисление публичного ключа
+    if (curve25519_generate_public(raw_public_key, raw_private_key) != 0) {
+        log_error("Failed to generate WireGuard public key");
+        secure_clear_memory(raw_private_key, sizeof(raw_private_key));
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    // Преобразование ключей в Base64
+    if (!base64_encode(private_key, raw_private_key, sizeof(raw_private_key)) ||
+        !base64_encode(public_key, raw_public_key, sizeof(raw_public_key))) {
+        log_error("Failed to encode WireGuard keys to Base64");
+        secure_clear_memory(raw_private_key, sizeof(raw_private_key));
+        secure_clear_memory(raw_public_key, sizeof(raw_public_key));
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    secure_clear_memory(raw_private_key, sizeof(raw_private_key));
+    secure_clear_memory(raw_public_key, sizeof(raw_public_key));
+
+    log_info("WireGuard keys generated successfully");
+    pthread_mutex_unlock(&wireguard_mutex);
+    return true;
+}
+
+// Инициализация WireGuard соединения
+bool initialize_wireguard(WireGuardState *state, const char *server_ip, int port) {
+    if (!state || !server_ip || port <= 0 || port > 65535) {
+        log_error("Invalid arguments for WireGuard initialization");
+        return false;
+    }
+
+    pthread_mutex_lock(&wireguard_mutex);
+
+    // Генерация ключей
+    if (!generate_wireguard_keys(state->private_key, state->public_key)) {
+        log_error("Failed to generate WireGuard keys");
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    // Сохранение параметров сервера
+    strncpy(state->server_ip, server_ip, sizeof(state->server_ip) - 1);
+    state->server_port = port;
+
+    // Создание адаптера WireGuard
+    state->adapter = WireGuardCreateAdapter(L"WireGuard-NT", L"WireGuard Adapter", NULL);
+    if (!state->adapter) {
+        log_error("Failed to create WireGuard adapter");
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    // Настройка конфигурации адаптера
+    if (!configure_wireguard_adapter(state)) {
+        log_error("Failed to configure WireGuard adapter");
+        WireGuardCloseAdapter(state->adapter);
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    state->is_connected = true;
+    log_info("WireGuard initialized successfully");
+    pthread_mutex_unlock(&wireguard_mutex);
+    return true;
+}
+
+// Настройка конфигурации WireGuard
+
+bool configure_wireguard_adapter(WireGuardState *state) {
+    pthread_mutex_lock(&wireguard_mutex);
+
+    WIREGUARD_PEER peer = {0};
+    WIREGUARD_INTERFACE wg_interface = {0};
+
+    // Настройка интерфейса
+    strncpy(wg_interface.PrivateKey, state->private_key, sizeof(wg_interface.PrivateKey) - 1);
+    wg_interface.ListenPort = 51820; // Стандартный порт WireGuard
+
+    // Настройка пира
+    strncpy(peer.PublicKey, state->peer_public_key, sizeof(peer.PublicKey) - 1);
+
+    // Установка Endpoint
+    if (!set_endpoint(&peer.Endpoint, state->server_ip, state->server_port)) {
+        log_error("Failed to set peer endpoint");
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    // Применение конфигурации
+    if (WireGuardSetConfiguration(state->adapter, &wg_interface, sizeof(wg_interface)) != ERROR_SUCCESS) {
+        log_error("Failed to set WireGuard interface configuration");
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    if (WireGuardAddPeer(state->adapter, &peer) != ERROR_SUCCESS) {
+        log_error("Failed to add WireGuard peer");
+        pthread_mutex_unlock(&wireguard_mutex);
+        return false;
+    }
+
+    log_info("WireGuard adapter configured successfully");
+    pthread_mutex_unlock(&wireguard_mutex);
+    return true;
+}
+
+// Завершение WireGuard соединения
+void teardown_wireguard(WireGuardState *state) {
+    pthread_mutex_lock(&wireguard_mutex);
+
+    if (state->adapter) {
+        WireGuardCloseAdapter(state->adapter);
+        state->adapter = NULL;
+        log_info("WireGuard adapter closed successfully");
+    }
+
+    secure_clear_memory(state->private_key, sizeof(state->private_key));
+    secure_clear_memory(state->public_key, sizeof(state->public_key));
+    secure_clear_memory(state->peer_public_key, sizeof(state->peer_public_key));
+
+    state->is_connected = false;
+    memset(state->server_ip, 0, sizeof(state->server_ip));
+    state->server_port = 0;
+
+    log_info("WireGuard cleaned up successfully");
+    pthread_mutex_unlock(&wireguard_mutex);
+}
