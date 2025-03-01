@@ -3,14 +3,14 @@
 A minimal VPN-like client implementation for educational purposes.
 
 ## Features
-- Basic TCP tunneling
+- Basic TCP&UDP tunneling
 - Connect with HTTPS proxies
 - Cross-platform support (Windows/Linux)
-- Basic UDP tunneling
+- udp-over-tcp obfuscation
 - Shadowsocks protocol support
 - PFS support
 - WireGuard protocol support
-
+- smart defence against DPI (comming soon)
 
 ## Requirements
 - CMake 3.10+
@@ -18,23 +18,14 @@ A minimal VPN-like client implementation for educational purposes.
 - OpenSSL
 - pthreads (for windows)
 - getopt.h (for windows)
-- WireGuard-nt
+- WireGuard-nt lib
 
 
 ## Basic TCP tunneling
 ```bash
 ./vpnCore WireGuard 1.1.1.1:51820 login:pass -uot
 ```
-output:
-╭──────────────────────────────────────────────╮
-│ VPN Connection Status: Connected [✓]         │
-│                                               │
-│ Location: Switzerland, Zurich                 │
-│ Protocol: WireGuard                           │
-│                                               │
-│ server: 1.1.1.1:51820 (UDP)                   │
-│ udp-over-tcp obfuscation  [✓]                │
-╰──────────────────────────────────────────────╯
+
 
 
 ## Instructions
