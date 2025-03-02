@@ -128,16 +128,6 @@ void signal_handler(int signum) {
     }
 }
 
-int establish_connection_with_proxy(const char *proxy_ip, int proxy_port, const char *target_host, int target_port) {
-    int sockfd = establish_https_proxy_tunnel(proxy_ip, proxy_port, target_host, target_port);
-    if (sockfd < 0) {
-        log_error("Failed to establish HTTPS proxy tunnel");
-        return -1;
-    }
-
-    log_info("HTTPS proxy tunnel established successfully through %s:%d", proxy_ip, proxy_port);
-    return sockfd;
-}
 
 
 void process_data(int socket_fd, Tunnel *tunnel) {
@@ -273,6 +263,40 @@ int main(int argc, char *argv[]) {
     if (!initialize_config(argc, argv)) {
         log_error("Failed to initialize configuration.");
         return EXIT_FAILURE;
+    }
+
+    // Создаем состояние Shadowsocks
+    ShadowsocksState shadowsocks_state = {0};
+
+    // Инициализация выбранного протокола
+    if (strcmp(global_config.protocol, "Shadowsocks") == 0) {
+        // Настройка Shadowsocks
+        const char *default_method = "aes-256-cfb"; // Метод шифрования по умолчанию
+        if (!initialize_shadowsocks(&shadowsocks_state, global_config.server_ip,
+                                    global_config.server_port, global_config.password,
+                                    default_method)) {
+            log_error("Failed to initialize Shadowsocks");
+            return EXIT_FAILURE;
+        }
+    } else if (strcmp(global_config.protocol, "WireGuard") == 0) {
+        // Настройка WireGuard
+        if (!initialize_wireguard(global_config.server_ip, global_config.server_port)) {
+            log_error("Failed to initialize WireGuard");
+            return EXIT_FAILURE;
+        }
+    } else {
+        log_error("Unsupported protocol: %s", global_config.protocol);
+        return EXIT_FAILURE;
+    }
+
+    // Включение защиты DPI
+    if (global_config.enable_dpi) {
+        enable_dpi_protection();
+    }
+
+    // Включение UDP-over-TCP
+    if (global_config.enable_udp_over_tcp) {
+        enable_udp_over_tcp_obfuscation();
     }
 
     // Установка соединения
