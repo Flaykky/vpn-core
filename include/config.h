@@ -5,15 +5,23 @@
 
 
 typedef struct {
-    char *protocol;
+    char *protocol; // "wireguard", "openvpn" и т.д.
     char *server_ip;
     int server_port;
     char *login;
     char *password;
-    char *country; 
+    char *country; // Для геолокации
     char *city;
     bool use_udp; 
+    bool enable_dpi;         // Флаг защиты от DPI (-d)
+    bool enable_udp_over_tcp; // Флаг UDP-over-TCP (uot)
+    char *wireguard_private_key; // Приватный ключ WireGuard
+    char *wireguard_peer_public_key; // Публичный ключ сервера
+    char *dns_server; 
 } Config;
+
+
+extern Config global_config;
 
 extern Config global_config;
 
