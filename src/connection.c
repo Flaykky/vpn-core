@@ -27,7 +27,6 @@
 #include <bcrypt.h>
 #include <winsock.h>
 #include <fwpmu.h>
-#pragma comment(lib, "ws2_32.lib")
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
