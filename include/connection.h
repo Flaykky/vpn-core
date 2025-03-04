@@ -9,24 +9,41 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-
+#include "wireguard-nt-master/api/wireguard.h"
+#include "wireguard-nt-master/api/adapter.h"
 typedef SSIZE_T ssize_t;
-#pragma comment(lib, "ws2_32.lib")
 
 #else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
 #endif
 
 
+#define WG_KEY_LEN 32
+
 typedef struct {
-    char private_key[64]; // Приватный ключ в Base64
-    char public_key[64];  // Публичный ключ сервера
-    char endpoint[64];    // Адрес сервера (IP:port)
-    int mtu;              // MTU для туннеля
-    bool is_connected;    // Состояние соединения
+    char private_key[64];   // Приватный ключ в Base64
+    char public_key[64];    // Публичный ключ сервера (Base64)
+    char endpoint[128];     // Адрес сервера (IP:port)
+    char interface_name[16]; // Имя интерфейса
+    uint16_t listen_port;   // Порт для прослушивания (по умолчанию 51820)
+    bool is_connected;      // Состояние соединения
+#ifdef _WIN32
+    WIREGUARD_ADAPTER *adapter; // Для Windows
+#else
+    int wg_fd;              // Для Unix
+#endif
 } WireGuardState;
+
+
+bool wg_initialize(WireGuardState *state, const char *server_ip, uint16_t port, const char *private_key, const char *peer_pubkey);
+void wg_cleanup(WireGuardState *state);
+bool wg_connect(WireGuardState *state);
+void wg_disconnect(WireGuardState *state);
+ssize_t wg_send(WireGuardState *state, const void *data, size_t len);
+ssize_t wg_receive(WireGuardState *state, void *buffer, size_t len);
 
 typedef struct {
     SSL_CTX *ssl_ctx;
@@ -51,13 +68,14 @@ typedef struct {
 
 // Структура для состояния соединения Shadowsocks
 typedef struct {
-    int socket_fd;                  // Дескриптор сокета
-    char server_ip[64];             // IP-адрес сервера
-    int server_port;                // Порт сервера
-    char password[256];             // Пароль для шифрования
-    char method[32];                // Метод шифрования (например, "aes-256-cfb")
-    bool is_connected;              // Флаг активного соединения
+    int socket_fd;          // Дескриптор сокета
+    char server_ip[64];     // IP-адрес сервера
+    int server_port;        // Порт сервера
+    char password[256];     // Пароль для шифрования
+    char method[32];        // Метод шифрования
+    bool is_connected;      // Флаг подключения
 } ShadowsocksState;
+
 
 
 
@@ -121,5 +139,15 @@ ssize_t receive_data_shadowsocks(ShadowsocksState *state, void *buffer, size_t l
 
 // Переподключение при разрыве
 bool reconnect_shadowsocks(ShadowsocksState *state);
+
+
+// Инициализация WireGuard
+bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, const char *private_key, const char *server_public_key);
+
+// Завершение WireGuard
+void close_wireguard(WireGuardState *state);
+
+// Переподключение
+bool reconnect_wireguard(WireGuardState *state);
 
 #endif // CONNECTION_H
