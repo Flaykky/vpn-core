@@ -18,10 +18,10 @@ A minimal VPN-like client implementation for educational purposes.
 - OpenSSL
 - pthreads (for windows)
 - getopt.h (for windows)
-- WireGuard-nt lib
+- WireGuard-nt
+- cJSON
 
-
-## Basic TCP tunneling
+## Basic WireGuard tunneling
 ```bash
 ./vpnCore WireGuard 1.1.1.1:51820 login:pass -uot
 ```
