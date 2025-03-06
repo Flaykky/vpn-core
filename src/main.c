@@ -285,6 +285,13 @@ int main(int argc, char *argv[]) {
     // Создаем состояние Shadowsocks
     ShadowsocksState shadowsocks_state = {0};
 
+    WireGuardState wg_state = {0};
+    char server_endpoint[64];
+
+    // Формируем endpoint в формате IP:port
+    snprintf(server_endpoint, sizeof(server_endpoint), "%s:%d", global_config.server_ip, global_config.server_port);
+
+
     // Инициализация выбранного протокола
     if (strcmp(global_config.protocol, "Shadowsocks") == 0) {
         // Настройка Shadowsocks
@@ -296,11 +303,22 @@ int main(int argc, char *argv[]) {
             return EXIT_FAILURE;
         }
     } else if (strcmp(global_config.protocol, "WireGuard") == 0) {
-        // Настройка WireGuard
-        if (!initialize_wireguard(global_config.server_ip, global_config.server_port)) {
-            log_error("Failed to initialize WireGuard");
+        // Генерация ключей, если не указаны
+    if (!global_config.wireguard_private_key || !global_config.wireguard_public_key) {
+        log_info("Generating WireGuard keys...");
+        if (!generate_wireguard_keys(wg_state.private_key, wg_state.public_key)) {
+            log_error("Failed to generate keys");
             return EXIT_FAILURE;
         }
+        global_config.wireguard_private_key = wg_state.private_key;
+        global_config.wireguard_public_key = wg_state.public_key;
+    }
+
+    if (!initialize_wireguard(&wg_state, server_endpoint,
+                              global_config.wireguard_private_key,
+                              global_config.wireguard_public_key)) {
+        log_error("Failed to initialize WireGuard");
+        return EXIT_FAILURE;
     } else {
         log_error("Unsupported protocol: %s", global_config.protocol);
         return EXIT_FAILURE;
