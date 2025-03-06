@@ -15,7 +15,6 @@
 #include <basetsd.h>
 #include <getopt.h>
 
-
 #ifdef _WIN32
 #include <windows.h>
 #pragma comment(lib, "wintun.lib")
@@ -27,6 +26,18 @@
 #include "config.h"
 #include <pthread.h>
 #include <unistd.h>
+
+static void print_help() {
+    printf(
+        "Usage: ./vpnCore [OPTIONS] PROTOCOL SERVER:PORT\n"
+        "Protocols: wireguard, shadowsocks, tcp, udp\n"
+        "Options:\n"
+        "  -d, --dpi        Enable anti-DPI protection\n"
+        "  -u, --uot        Enable UDP-over-TCP obfuscation\n"
+        "  --proxy=TYPE     Proxy type (socks5/http/https)\n"
+        "  --add-serv=FILE  Add server to configuration file\n"
+    );
+}
 
 static void *monitor_thread(void *arg) {
     // Создаем временное состояние соединения
@@ -263,6 +274,12 @@ int main(int argc, char *argv[]) {
     if (!initialize_config(argc, argv)) {
         log_error("Failed to initialize configuration.");
         return EXIT_FAILURE;
+    }
+
+
+    if (argc == 2 && strcmp(argv[1], "help") == 0) {
+        print_help();
+        return EXIT_SUCCESS;
     }
 
     // Создаем состояние Shadowsocks
