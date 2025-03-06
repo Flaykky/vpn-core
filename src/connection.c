@@ -23,6 +23,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <iptypes.h>
 #include <windows.h>
 #include <ws2ipdef.h>
 #include <bcrypt.h>
@@ -434,6 +435,25 @@ bool initialize_ssl(EncryptionContext *ctx) {
     return true;
 }
 
+//
+/* BASIC PROTOCOLS */
+//
+
+// TCP-туннелирование
+bool initialize_tcp(ProtocolState *state, const char *server_ip, int port) {
+    if (!state) return false;
+    state->type = PROTOCOL_TCP;
+    state->tcp_socket = establish_tcp_connection(server_ip, port);
+    return state->tcp_socket >= 0;
+}
+
+// UDP-туннелирование
+bool initialize_udp(ProtocolState *state, const char *server_ip, int port) {
+    if (!state) return false;
+    state->type = PROTOCOL_UDP;
+    state->udp_socket = establish_udp_connection(server_ip, port);
+    return state->udp_socket >= 0;
+}
 
 int establish_connection(const char *server_ip, int port) {
     int sockfd;
@@ -1069,23 +1089,17 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
         return false;
     }
 
-    // Настройка разрешенных IP-адресов
     WIREGUARD_ALLOWED_IP allowed_ips[2] = {0};
-    allowed_ips[0].Address.Ipv4.sin_family = AF_INET;
-    inet_pton(AF_INET, "0.0.0.0", &allowed_ips[0].Address.Ipv4.sin_addr);
+
+    // Для IPv4
+    allowed_ips[0].Address.V4.sin_family = AF_INET;
+    inet_pton(AF_INET, "0.0.0.0", &allowed_ips[0].Address.V4.sin_addr);
     allowed_ips[0].Cidr = 0;
-
-    allowed_ips[1].Address.Ipv6.sin6_family = AF_INET6;
-    inet_pton(AF_INET6, "::", &allowed_ips[1].Address.Ipv6.sin6_addr);
+    
+    // Для IPv6
+    allowed_ips[1].Address.V6.sin6_family = AF_INET6;
+    inet_pton(AF_INET6, "::", &allowed_ips[1].Address.V6.sin6_addr);
     allowed_ips[1].Cidr = 0;
-
-    if (WireGuardSetAllowedIPs(state->adapter, peer.PublicKey, allowed_ips, 2) != ERROR_SUCCESS) {
-        log_error("Failed to set allowed IPs");
-        WireGuardRemovePeer(state->adapter, peer.PublicKey);
-        WireGuardCloseAdapter(state->adapter);
-        pthread_mutex_unlock(&wg_mutex);
-        return false;
-    }
 #else
     // Для Unix: Используем ioctl и wireguard-tools
     state->wg_fd = socket(AF_INET, SOCK_DGRAM, 0);
