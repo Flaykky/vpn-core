@@ -31,7 +31,16 @@ A minimal VPN client for private use.
 ./vpnCore -d --proxy=socks5 tcp 1.1.1.1:443
 ```
 
-
+## Json config file example
+```json
+{
+    "protocol": "wireguard",
+    "server_ip": "1.1.1.1",
+    "server_port": 51820,
+    "wireguard_private_key": "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIg2fZOk7hKQ=",
+    "wireguard_public_key": "xTIBA5rboUvnH4htodDoEj3WZ+barGBCQHbR47hTHA="
+}
+```
 
 ## Instructions
 ```bash
