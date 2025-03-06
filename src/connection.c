@@ -23,7 +23,7 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <iptypes.h>
+
 #include <windows.h>
 #include <ws2ipdef.h>
 #include <bcrypt.h>
@@ -1015,6 +1015,10 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
         return false;
     }
 
+    // Сохраняем endpoint
+    strncpy(state->endpoint, server_endpoint, sizeof(state->endpoint) - 1);
+    state->endpoint[sizeof(state->endpoint) - 1] = '\0';
+
     // Генерация ключей (если не предоставлены)
     if (strlen(private_key) == 0) {
         char generated_private_key[64];
@@ -1037,8 +1041,6 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
         return false;
     }
     memcpy(state->public_key, decoded_public_key, WIREGUARD_KEY_LENGTH);
-
-    strncpy(state->endpoint, server_endpoint, sizeof(state->endpoint));
 
 #ifdef _WIN32
     // Создание адаптера
@@ -1069,11 +1071,11 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
     // Добавление пира
     WIREGUARD_PEER peer = {0};
     memcpy(peer.PublicKey, decoded_public_key, WIREGUARD_KEY_LENGTH);
-    peer.PersistentKeepalive = 25; // Интервал keepalive
+    peer.PersistentKeepalive = 25;
 
     // Парсим endpoint
     SOCKADDR_INET endpoint_addr;
-    if (!parse_endpoint(state->endpoint, &endpoint_addr)) {
+    if (!parse_endpoint(server_endpoint, &endpoint_addr)) { // Используем server_endpoint
         log_error("Failed to parse endpoint");
         WireGuardCloseAdapter(state->adapter);
         pthread_mutex_unlock(&wg_mutex);
@@ -1081,7 +1083,6 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
     }
     peer.Endpoint = endpoint_addr;
 
-    // Добавляем пир
     if (WireGuardAddPeer(state->adapter, &peer) != ERROR_SUCCESS) {
         log_error("Failed to add WireGuard peer");
         WireGuardCloseAdapter(state->adapter);
@@ -1090,18 +1091,23 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
     }
 
     WIREGUARD_ALLOWED_IP allowed_ips[2] = {0};
-
-    // Для IPv4
     allowed_ips[0].Address.V4.sin_family = AF_INET;
     inet_pton(AF_INET, "0.0.0.0", &allowed_ips[0].Address.V4.sin_addr);
     allowed_ips[0].Cidr = 0;
-    
-    // Для IPv6
+
     allowed_ips[1].Address.V6.sin6_family = AF_INET6;
     inet_pton(AF_INET6, "::", &allowed_ips[1].Address.V6.sin6_addr);
     allowed_ips[1].Cidr = 0;
+
+    if (WireGuardSetAllowedIPs(state->adapter, peer.PublicKey, allowed_ips, 2) != ERROR_SUCCESS) {
+        log_error("Failed to set allowed IPs");
+        WireGuardRemovePeer(state->adapter, peer.PublicKey);
+        WireGuardCloseAdapter(state->adapter);
+        pthread_mutex_unlock(&wg_mutex);
+        return false;
+    }
 #else
-    // Для Unix: Используем ioctl и wireguard-tools
+    // Unix-версия
     state->wg_fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (state->wg_fd < 0) {
         log_error("Failed to create WireGuard socket");
@@ -1117,7 +1123,6 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
         return false;
     }
 
-    // Настройка приватного ключа
     if (wg_key_from_base64(device->private_key, state->private_key) != 0) {
         log_error("Invalid private key format");
         free(device);
@@ -1126,7 +1131,6 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
         return false;
     }
 
-    // Настройка пира
     struct wg_peer *peer = calloc(1, sizeof(struct wg_peer));
     if (!peer) {
         log_error("Memory allocation failed");
@@ -1145,15 +1149,24 @@ bool initialize_wireguard(WireGuardState *state, const char *server_endpoint, co
         return false;
     }
 
-    // Парсинг endpoint (IP:port)
-    char *endpoint_copy = strdup(state->endpoint);
+    // Парсинг endpoint
+    char *endpoint_copy = strdup(server_endpoint);
     char *ip = strtok(endpoint_copy, ":");
     char *port_str = strtok(NULL, ":");
+    if (!ip || !port_str) {
+        log_error("Invalid endpoint format");
+        free(endpoint_copy);
+        free(peer);
+        free(device);
+        close(state->wg_fd);
+        pthread_mutex_unlock(&wg_mutex);
+        return false;
+    }
+
     peer->endpoint.sin_family = AF_INET;
     peer->endpoint.sin_port = htons(atoi(port_str));
     inet_pton(AF_INET, ip, &peer->endpoint.sin_addr);
 
-    // Добавление пира в устройство
     device->peers = peer;
     device->peers_count = 1;
 
