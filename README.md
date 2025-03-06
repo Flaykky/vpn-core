@@ -1,6 +1,6 @@
 # Simple VPN Client in C
 
-A minimal VPN-like client implementation for educational purposes.
+A minimal VPN client for private use.
 
 ## Features
 - Basic TCP&UDP tunneling
