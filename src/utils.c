@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "cJSON.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -47,7 +48,7 @@ bool read_config_file(const char *filename, Config *config) {
             if (strcmp(key, "server_ip") == 0) {
                 config->server_ip = strdup(value);
             } else if (strcmp(key, "port") == 0) {
-                config->port = atoi(value);
+                config->server_port = atoi(value);
             }
         }
     }
@@ -246,3 +247,35 @@ bool check_file_permissions(const char *filename) {
 #endif
 }
 
+bool add_server_to_config(const char *filename, const char *server_ip, int port) {
+    cJSON *root = NULL;
+    FILE *file = fopen(filename, "r");
+    
+    if (file) {
+        char *content = read_file_contents(filename, NULL);
+        root = cJSON_Parse(content);
+        free(content);
+        fclose(file);
+    } else {
+        root = cJSON_CreateArray();
+    }
+
+    cJSON *server = cJSON_CreateObject();
+    cJSON_AddStringToObject(server, "ip", server_ip);
+    cJSON_AddNumberToObject(server, "port", port);
+    cJSON_AddItemToArray(root, server);
+
+    char *json_str = cJSON_Print(root);
+    FILE *out = fopen(filename, "w");
+    if (!out) {
+        log_error("Failed to write to config file");
+        cJSON_Delete(root);
+        return false;
+    }
+
+    fprintf(out, "%s", json_str);
+    fclose(out);
+    cJSON_Delete(root);
+    log_info("Server %s:%d added to %s", server_ip, port, filename);
+    return true;
+}
