@@ -19,55 +19,68 @@
 Config global_config = {0};
 static pthread_mutex_t config_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-bool read_config_file(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        log_error("Failed to open config file: %s", filename);
+bool initialize_config(int argc, char *argv[]) {
+    static struct option long_options[] = {
+        {"dpi", no_argument, 0, 'd'}, // Флаг -d для защиты DPI
+        {"uot", no_argument, 0, 'u'}, // Флаг --uot для UDP-over-TCP
+        {0, 0, 0, 0}
+    };
+
+    int opt;
+    while ((opt = getopt_long(argc, argv, "du", long_options, NULL)) != -1) {
+        switch (opt) {
+            case 'd':
+                global_config.enable_dpi = true;
+                break;
+            case 'u':
+                global_config.enable_udp_over_tcp = true;
+                break;
+            default:
+                fprintf(stderr, "Usage: %s [protocol] [server:port] [login:pass] [-d] [--uot]\n", argv[0]);
+                return false;
+        }
+    }
+
+    // Позиционные аргументы
+    if (optind + 3 > argc) {
+        fprintf(stderr, "Too few arguments. Usage: %s [protocol] [server:port] [login:pass] [-d] [--uot]\n", argv[0]);
         return false;
     }
 
-    fseek(file, 0, SEEK_END);
-    long length = ftell(file);
-    fseek(file, 0, SEEK_SET);
-
-    char *json_str = malloc(length + 1);
-    if (!json_str) {
+    // Парсинг протокола
+    global_config.protocol = strdup(argv[optind++]);
+    if (!global_config.protocol) {
         log_error("Memory allocation failed");
-        fclose(file);
         return false;
     }
 
-    fread(json_str, 1, length, file);
-    json_str[length] = '\0';
-    fclose(file);
-
-    cJSON *root = cJSON_Parse(json_str);
-    free(json_str);
-    if (!root) {
-        log_error("Failed to parse JSON");
+    // Парсинг server:port
+    char *server_port_str = argv[optind++];
+    char *colon_pos = strchr(server_port_str, ':');
+    if (!colon_pos) {
+        log_error("Invalid server:port format");
         return false;
     }
+    *colon_pos = '\0';
+    global_config.server_ip = strdup(server_port_str);
+    global_config.server_port = atoi(colon_pos + 1);
+    *colon_pos = ':'; // Восстанавливаем строку
 
-    cJSON *protocol = cJSON_GetObjectItemCaseSensitive(root, "protocol");
-    cJSON *server_ip = cJSON_GetObjectItemCaseSensitive(root, "serverIp");
-    cJSON *server_port = cJSON_GetObjectItemCaseSensitive(root, "serverPort");
-    cJSON *login = cJSON_GetObjectItemCaseSensitive(root, "login");
-    cJSON *password = cJSON_GetObjectItemCaseSensitive(root, "password");
-
-    if (cJSON_IsString(protocol) && cJSON_IsString(server_ip) && cJSON_IsNumber(server_port)) {
-        global_config.protocol = strdup(protocol->valuestring);
-        global_config.server_ip = strdup(server_ip->valuestring);
-        global_config.server_port = server_port->valueint;
-        global_config.login = login ? strdup(login->valuestring) : NULL;
-        global_config.password = password ? strdup(password->valuestring) : NULL;
-    } else {
-        log_error("Invalid config format");
-        cJSON_Delete(root);
+    // Парсинг login:pass
+    char *auth_str = argv[optind++];
+    char *auth_colon = strchr(auth_str, ':');
+    if (!auth_colon) {
+        log_error("Invalid login:pass format");
         return false;
     }
+    *auth_colon = '\0';
+    global_config.login = strdup(auth_str);
+    global_config.password = strdup(auth_colon + 1);
+    *auth_colon = ':'; // Восстанавливаем строку
 
-    cJSON_Delete(root);
-    log_info("Configuration loaded from JSON file");
+    log_info("Config parsed: protocol=%s, server=%s:%d, login=%s, dpi=%d, uot=%d",
+             global_config.protocol, global_config.server_ip, global_config.server_port,
+             global_config.login, global_config.enable_dpi, global_config.enable_udp_over_tcp);
     return true;
 }
 
@@ -162,4 +175,37 @@ void cleanup_config(void) {
     memset(&global_config, 0, sizeof(Config));
     pthread_mutex_unlock(&config_mutex);
     log_info("Configuration cleaned up successfully");
+}
+
+bool add_server_to_config(const char *filename, const char *server_ip, int port) {
+    cJSON *root = NULL;
+    FILE *file = fopen(filename, "r");
+    
+    if (file) {
+        char *content = read_file_contents(filename, NULL);
+        root = cJSON_Parse(content);
+        free(content);
+        fclose(file);
+    } else {
+        root = cJSON_CreateArray();
+    }
+
+    cJSON *server = cJSON_CreateObject();
+    cJSON_AddStringToObject(server, "ip", server_ip);
+    cJSON_AddNumberToObject(server, "port", port);
+    cJSON_AddItemToArray(root, server);
+
+    char *json_str = cJSON_Print(root);
+    FILE *out = fopen(filename, "w");
+    if (!out) {
+        log_error("Failed to write to config file");
+        cJSON_Delete(root);
+        return false;
+    }
+
+    fprintf(out, "%s", json_str);
+    fclose(out);
+    cJSON_Delete(root);
+    log_info("Server %s:%d added to %s", server_ip, port, filename);
+    return true;
 }
