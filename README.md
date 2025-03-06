@@ -23,7 +23,12 @@ A minimal VPN-like client implementation for educational purposes.
 
 ## Basic WireGuard tunneling
 ```bash
-./vpnCore WireGuard 1.1.1.1:51820 login:pass -uot
+./vpnCore WireGuard 1.1.1.1:51820 login:pass
+```
+
+## Connect through proxy
+```bash
+./vpnCore -d --proxy=socks5 tcp 1.1.1.1:443
 ```
 
 
