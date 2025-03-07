@@ -18,6 +18,8 @@ typedef struct {
     char *wireguard_private_key; // Приватный ключ WireGuard
     char *wireguard_peer_public_key; // Публичный ключ сервера
     char *dns_server; 
+    char *proxy_type; 
+    char *wireguard_public_key;  // Публичный ключ сервера
 } Config;
 
 
