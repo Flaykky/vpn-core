@@ -1,6 +1,6 @@
 # Simple VPN Client in C
 
-A minimal VPN client for private use.
+A minimalistic VPN client for private use.
 
 ## Features
 - Basic TCP&UDP tunneling
@@ -42,7 +42,13 @@ A minimal VPN client for private use.
 }
 ```
 
-## Instructions
+## Help
+```bash
+./VpnCore help
+```
+
+
+## Windows build
 ```bash
 mkdir build
 cd build
