@@ -20,6 +20,8 @@ A minimalistic VPN client for private use.
 - getopt.h (for windows)
 - WireGuard-nt
 - cJSON
+- ShadowSocks-libev
+- openvpn 
 
 ## Basic WireGuard tunneling
 ```bash
