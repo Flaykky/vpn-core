@@ -37,34 +37,35 @@
 
 
 
+
+// Установка TCP-туннеля
 int establish_tcp_tunnel(const char *server_ip, int port) {
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        log_error("Socket creation failed");
-        cleanup_winsock();
+    struct addrinfo hints = {0};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+
+    struct addrinfo *res;
+    if (getaddrinfo(server_ip, NULL, &hints, &res) != 0) {
+        log_error("Failed to resolve %s", server_ip);
         return -1;
     }
 
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(port);
+    int sockfd = -1;
+    for (struct addrinfo *p = res; p != NULL; p = p->ai_next) {
+        sockfd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
+        if (sockfd < 0) continue;
 
-    if (inet_pton(AF_INET, server_ip, &server_addr.sin_addr) <= 0) {
-        log_error("Invalid address/ Address not supported");
+        struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
+        ipv4->sin_port = htons(port);
+
+        if (connect(sockfd, p->ai_addr, p->ai_addrlen) == 0) {
+            break;
+        }
         close(sockfd);
-        cleanup_winsock();
-        return -1;
+        sockfd = -1;
     }
 
-    if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        log_error("Connection failed");
-        close(sockfd);
-        cleanup_winsock();
-        return -1;
-    }
-
-    log_info("TCP tunnel established successfully to %s:%d", server_ip, port);
+    freeaddrinfo(res);
     return sockfd;
 }
 
@@ -82,10 +83,30 @@ int establish_tcp_tunnel(const char *server_ip, int port) {
 
 
     
-// TCP-туннелирование
+// Инициализация TCP-протокола
 bool initialize_tcp(ProtocolState *state, const char *server_ip, int port) {
-    if (!state) return false;
+    if (!state || !server_ip || port <= 0) {
+        log_error("Invalid arguments for TCP initialization");
+        return false;
+    }
+
     state->type = PROTOCOL_TCP;
-    state->tcp_socket = establish_tcp_connection(server_ip, port);
-    return state->tcp_socket >= 0;
+    state->tcp_socket = establish_tcp_tunnel(server_ip, port);
+
+    if (state->tcp_socket < 0) {
+        log_error("Failed to establish TCP tunnel");
+        return false;
+    }
+
+    log_info("TCP initialized successfully");
+    return true;
+}
+
+// Закрытие TCP-соединения
+void close_tcp(ProtocolState *state) {
+    if (!state || state->type != PROTOCOL_TCP) return;
+
+    close(state->tcp_socket);
+    state->tcp_socket = -1;
+    log_info("TCP connection closed");
 }
