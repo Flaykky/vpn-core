@@ -30,7 +30,7 @@ A minimalistic VPN client for private use.
 
 ## Connect through proxy
 ```bash
-./vpnCore -d --proxy=socks5 tcp 1.1.1.1:443
+./vpnCore --proxy=socks5 tcp 1.1.1.1:443
 ```
 
 ## Json config file example
