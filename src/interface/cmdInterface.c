@@ -16,8 +16,7 @@
 #include <getopt.h>
 
 #ifdef _WIN32
-#include <windows.h>
-#pragma comment(lib, "wintun.lib")
+#include <windows.h> 
 #else
 #endif
 
@@ -190,7 +189,7 @@ void process_data(int socket_fd, Tunnel *tunnel) {
 
 
 // Основная функция
-int main(int argc, char *argv[]) {
+int interface(int argc, char *argv[]) {
     static struct option long_options[] = {
         {"mode", required_argument, 0, 'm'},
         {"server", required_argument, 0, 's'},
