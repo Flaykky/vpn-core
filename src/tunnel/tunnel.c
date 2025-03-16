@@ -9,7 +9,6 @@
 
 
 #ifdef _WIN32
-#pragma comment(lib, "wintun.lib")
 #else
 #include <sys/ioctl.h>
 #endif
