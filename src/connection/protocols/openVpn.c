@@ -17,20 +17,6 @@
     #define STRDUP(str) strdup(str)
 #endif
 
-// Статические переменные для отслеживания состояния
-static bool is_initialized = false;
-static bool is_connected = false;
-
-// Внутренняя структура для конфигурации
-typedef struct {
-    char* server;
-    int port;
-    char* username;
-    char* password;
-} InternalConfig;
-
-// Глобальная переменная для хранения конфигурации
-static InternalConfig* current_config = NULL;
 
 // Вспомогательная функция для безопасного освобождения памяти
 static void safe_free(char** ptr) {
