@@ -21,7 +21,7 @@ A minimalistic VPN client for private use.
 - WireGuard-nt
 - cJSON
 - ShadowSocks-libev
-- openvpn 
+- OpenVPN
 
 ## Basic WireGuard tunneling
 ```bash
