@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <config.h>
+#include "config.h"
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
