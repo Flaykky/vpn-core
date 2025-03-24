@@ -2,7 +2,7 @@
 
 # Проверка зависимостей
 if ! command -v gcc &> /dev/null; then
-    echo "GCC не установлен. Устанавливаю..."
+    echo "GCC not installed. installing..."
     sudo apt-get update
     sudo apt-get install -y build-essential
 fi
@@ -17,8 +17,8 @@ make all
 
 # Проверка успешности сборки
 if [ $? -eq 0 ]; then
-    echo "VPN Core собран успешно: ./vpnCore"
+    echo "VPN Core built successfully: ./vpnCore"
 else
-    echo "Сборка завершилась с ошибкой"
+    echo "something went wrong."
     exit 1
 fi
