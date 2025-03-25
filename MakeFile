@@ -1,1 +1,38 @@
-# updating comming soon
+# Переменные
+CC = gcc
+CFLAGS = -Wall -Wextra -O2 -fstack-protector-strong -D_GNU_SOURCE
+LDFLAGS = -lssl -lcrypto -lpthread -lz
+SRC_DIRS = core/src/protocols core/src/utils core/src
+INCLUDE_DIRS = -Icore/include -Ilibs/OpenSSL/include
+TARGET = vpnCore
+
+# Источники
+SRCS := $(wildcard $(SRC_DIRS)/*.c) \
+        $(wildcard core/src/protocols/*.c) \
+        $(wildcard core/src/utils/*.c)
+
+OBJS := $(SRCS:.c=.o)
+
+# Правила сборки
+all: $(TARGET)
+
+$(TARGET): $(OBJS)
+    $(CC) $(CFLAGS) $(INCLUDE_DIRS) -o $@ $^ $(LDFLAGS)
+
+# Компиляция .c файлов
+%.o: %.c
+    $(CC) $(CFLAGS) $(INCLUDE_DIRS) -c $< -o $@
+
+# Установка зависимостей (Linux)
+deps-linux:
+    sudo apt-get install -y libssl-dev wireguard openvpn zlib1g-dev
+
+# Очистка
+clean:
+    rm -f $(OBJS) $(TARGET)
+
+# Тестирование
+test:
+    ./tests/run_tests.sh
+
+.PHONY: all clean deps-linux test
