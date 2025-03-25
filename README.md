@@ -33,7 +33,7 @@ A minimalistic VPN client for private use.
 ./vpnCore --proxy=socks5 tcp 1.1.1.1:443
 ```
 
-## Json config file example
+## Json config file template
 ```json
 {
     "protocol": "wireguard",
@@ -44,7 +44,7 @@ A minimalistic VPN client for private use.
 }
 ```
 
-## Help
+## Help information
 ```bash
 ./VpnCore help
 ```
