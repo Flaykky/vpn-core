@@ -5,8 +5,10 @@
 #include "config.h"
 #include "logging.h"
 #include "utils.h"
-#include "killswitch.h"
-#include "obfuscation.h"
+#include "kswin.h"
+#include "kslinux.h"
+#include "uot.h"
+#include "dpiBypass.h"
 #include <signal.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -14,9 +16,25 @@
 #include <unistd.h>
 #include <basetsd.h>
 #include <getopt.h>
+#include "connection.h"
+#include "config.h"
+#include <pthread.h>
+#include <unistd.h>
+#include "wgLinux.h"
+#include "wgWin.h"
+#include "tcp.h"
+#include "proxy.h"
+#include "udp.h"
+#include "shdScks.h"
+#include "openvpn.h"
+#include "dnsBlocks.h"
+#include "dnsResolver.h"
+#include "pfs.h"
+#include "cmdinterface.h"
 
 #ifdef _WIN32
-#include <windows.h> 
+#include <windows.h>
+#pragma comment(lib, "wintun.lib")
 #else
 #endif
 
@@ -80,53 +98,9 @@ static void *monitor_thread(void *arg) {
     return NULL;
 }
 
-void process_data(int socket_fd, Tunnel *tunnel) {
-    char buffer[1024];
-    ssize_t bytes_read;
 
-    // Чтение данных из туннеля
-    bytes_read = read_from_tunnel(tunnel, buffer, sizeof(buffer));
-    if (bytes_read > 0) {
-        // Обфускация и шифрование
-        unsigned char obfuscated_data[2048];
-        ssize_t obfuscated_len = obfuscate_udp_over_tcp(buffer, bytes_read, obfuscated_data, sizeof(obfuscated_data));
-        if (obfuscated_len < 0) {
-            log_error("Obfuscation failed");
-            return;
-        }
 
-        // Отправка обфусцированных данных
-        send_data(socket_fd, obfuscated_data, obfuscated_len);
-    }
 
- }
-
-bool read_config_file(const char *filename, Config *config) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        log_error("Failed to open config file: %s", filename);
-        return false;
-    }
-
-    char line[256];
-    while (fgets(line, sizeof(line), file)) {
-        char *key = strtok(line, "=");
-        char *value = strtok(NULL, "\n");
-
-        if (key && value) {
-            if (strcmp(key, "server_ip") == 0) {
-                free(config->server_ip); // Освобождаем предыдущее значение
-                config->server_ip = strdup(value);
-            } else if (strcmp(key, "port") == 0) {
-                config->server_port = atoi(value);
-            }
-        }
-    }
-
-    fclose(file);
-    log_info("Configuration loaded from file: %s", filename);
-    return true;
-}
 
 // Флаг для выхода из основного цикла
 static volatile sig_atomic_t terminate_flag = 0;
@@ -189,7 +163,7 @@ void process_data(int socket_fd, Tunnel *tunnel) {
 
 
 // Основная функция
-int interface(int argc, char *argv[]) {
+int cmdInterface(int argc, char *argv[]) {
     static struct option long_options[] = {
         {"mode", required_argument, 0, 'm'},
         {"server", required_argument, 0, 's'},
@@ -589,4 +563,5 @@ int interface(int argc, char *argv[]) {
     log_info("VPN core terminated successfully."); // лог
 
     return EXIT_SUCCESS;
+    }
 }
