@@ -6,26 +6,25 @@
 
 // Типы DNS-серверов
 typedef enum {
-    DNS_DEFAULT = 0,
-    DNS_BLOCK_ADS = 100, // 100.64.0.1
-    DNS_BLOCK_TRACKERS = 101, // 100.64.0.2
-    DNS_BLOCK_BOTH = 102 // 100.64.0.3
+    DNS_BLOCK_ADS = 0,      // 100.64.0.1
+    DNS_BLOCK_TRACKERS,     // 100.64.0.2
+    DNS_BLOCK_ALL           // 100.64.0.3
 } DnsServerType;
 
-// Структура DNS-резолвера
+// Структура для DNS-резолвера
 typedef struct {
-    char *dns_server_ip;
-    uint16_t dns_port;
-    pthread_mutex_t mutex;
-} DNSResolver;
+    char *dns_servers[3];   // Массив серверов
+    DnsServerType current;  // Текущий сервер
+    pthread_mutex_t mutex;  // Потокобезопасность
+} DnsResolver;
 
 // Инициализация DNS-резолвера
-bool dns_resolver_init(DNSResolver *resolver, DnsServerType type);
+bool dns_resolver_init(DnsResolver *resolver, DnsServerType type);
 
-// Выполнение DNS-запроса
-bool dns_resolve(DNSResolver *resolver, const char *domain, char *result, size_t result_size);
+// Разрешение домена в IP
+bool dns_resolve(DnsResolver *resolver, const char *domain, char *ip_buffer, size_t ip_buffer_size);
 
-// Очистка ресурсов
-void dns_resolver_cleanup(DNSResolver *resolver);
+// Деинициализация
+void dns_resolver_cleanup(DnsResolver *resolver);
 
 #endif // DNS_RESOLVER_H
