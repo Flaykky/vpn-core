@@ -1,17 +1,21 @@
-#ifndef DNSBLOCKS_H
-#define DNSBLOCKS_H
+#ifndef DNS_BLOCKS_H
+#define DNS_BLOCKS_H
 
 #include <stdbool.h>
+#include "dnsResolver.h"
 
-/*
-dns для блокировки айпи логгеров: 149.112.112.112; 9.9.9.9
-dns для блокировки рекламы: 94.140.14.14; 94.140.15.15
-*/
+// Типы блокировок
+typedef enum {
+    BLOCK_NONE = 0,
+    BLOCK_ADS = 1,
+    BLOCK_TRACKERS = 2,
+    BLOCK_BOTH = 3
+} BlockType;
 
-#define DNS_FOR_LOGGER "149.112.112.112" 
-#define DNS_ADBLOCK "94.140.14.14"
-#define DNS_QUAD9 "9.9.9.9" 
-#define ANOTHER_DFL "94.140.15.15" // запасной dns для адблока
+// Настройка DNS-блокировок
+bool dns_blocks_set(BlockType type);
 
+// Восстановление оригинальных DNS-настроек
+bool dns_blocks_reset();
 
-#endif 
+#endif // DNS_BLOCKS_H
