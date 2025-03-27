@@ -1,4 +1,4 @@
-#include "include/connection/connection.h"
+#include "connection.h"
 #include "logging.h"
 #include <stdio.h>
 #include <stdlib.h>
