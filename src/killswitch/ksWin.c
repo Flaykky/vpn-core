@@ -1,0 +1,2 @@
+// killswitch for windows
+
