@@ -6,7 +6,7 @@ A minimalistic VPN client for private use.
 - Basic TCP&UDP tunneling
 - Connect with HTTPS proxies
 - Cross-platform support (Windows/Linux)
-- udp-over-tcp obfuscation
+- obfuscation
 - Shadowsocks protocol support
 - PFS support
 - WireGuard protocol support
