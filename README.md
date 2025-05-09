@@ -57,3 +57,7 @@ cd build
 cmake ..
 cmake --build .
 ```
+## LICENSE
+
+Distributed under the MIT License. See [LICENSE](LICENSE) file for details.
+
