@@ -23,6 +23,13 @@ A minimalistic VPN client for private use.
 - ShadowSocks-libev
 - OpenVPN
 
+
+## installation
+```bash
+git clone https://github.com/Flaykky/vpn-core
+cd vpn-core
+```
+
 ## Basic WireGuard tunneling
 ```bash
 ./vpnCore WireGuard 1.1.1.1:51820 login:pass
